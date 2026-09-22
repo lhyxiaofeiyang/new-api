@@ -74,18 +74,20 @@ interface MetricDefinition {
   key: string
   titleKey: string
   value: string
-  descriptionKey: string
+  /** i18n key for the sub-line. */
+  descriptionKey?: string
+  /** Preformatted sub-line (values that are not translation keys). */
+  description?: string
   icon: LucideIcon
   tone: Tone
-  unavailable?: boolean
 }
 
-function buildMetrics(
-  t: (key: string) => string,
-  summary: ObservabilitySummary,
-  errorLogEnabled: boolean
-): MetricDefinition[] {
-  const unavailable = !errorLogEnabled
+/**
+ * Every card shows a value: the backend computes the success rate from error
+ * logs when they are enabled, and from the `perf_metrics` buckets otherwise.
+ * Only per-request failure *details* depend on error logs.
+ */
+function buildMetrics(summary: ObservabilitySummary): MetricDefinition[] {
   return [
     {
       key: 'calls',
@@ -122,13 +124,10 @@ function buildMetrics(
     {
       key: 'success',
       titleKey: 'Success Rate',
-      value: unavailable ? '--' : formatSuccessRate(summary.success_rate),
-      descriptionKey: unavailable
-        ? t('Enable error logs to track failures')
-        : `${formatNumber(summary.success_calls)} / ${formatNumber(summary.total_calls)}`,
+      value: formatSuccessRate(summary.success_rate),
+      description: `${formatNumber(summary.success_calls)} / ${formatNumber(summary.total_calls)}`,
       icon: TrendingUp,
       tone: 'accent-2',
-      unavailable,
     },
     {
       key: 'prompt-tokens',
@@ -328,7 +327,7 @@ export function OverviewPage(props: OverviewPageProps) {
 
   const summary = data?.summary
   const errorLogEnabled = data?.data_source.error_log_enabled ?? false
-  const metrics = summary ? buildMetrics(t, summary, errorLogEnabled) : []
+  const metrics = summary ? buildMetrics(summary) : []
   const traffic = data?.traffic ?? []
   const hourly = data?.hourly_activity ?? []
 
@@ -376,7 +375,7 @@ export function OverviewPage(props: OverviewPageProps) {
               <AlertTitle>{t('Failure details are unavailable')}</AlertTitle>
               <AlertDescription>
                 {t(
-                  'Error logs are disabled on this instance, so failure counts, the success rate and the request health timeline show no data.'
+                  'Per-request failure details require error logs, which are disabled on this instance'
                 )}
               </AlertDescription>
             </Alert>
@@ -410,10 +409,12 @@ export function OverviewPage(props: OverviewPageProps) {
                     key={metric.key}
                     title={t(metric.titleKey)}
                     value={metric.value}
-                    description={t(metric.descriptionKey)}
+                    description={
+                      metric.description ??
+                      (metric.descriptionKey ? t(metric.descriptionKey) : '')
+                    }
                     icon={metric.icon}
                     tone={metric.tone}
-                    error={metric.unavailable}
                     compactMobile
                   />
                 ))}

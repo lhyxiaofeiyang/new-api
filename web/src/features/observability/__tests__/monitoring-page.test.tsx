@@ -88,12 +88,29 @@ test('renders a row and expands it into the retry chain and billing detail', asy
   expect(screen.getAllByText('First Byte')).toHaveLength(2)
 })
 
+test('shows the user column and drops the quota column, matching the usage log table', async () => {
+  mockEndpoints(SUMMARY_RESPONSE)
+  await renderMonitoring()
+
+  // 用户列（后端 users JOIN 提供 username，与「使用日志」同款呈现）
+  expect(
+    screen.getByRole('columnheader', { name: 'User' })
+  ).toBeVisible()
+  expect(await screen.findByText('root')).toBeVisible()
+
+  // 额度列已删除。注意：t('Quota') 在展开明细与聚合卡片里仍合法存在，
+  // 因此这里只能对表头断言，不能用全页文本搜索。
+  expect(
+    screen.queryByRole('columnheader', { name: 'Quota' })
+  ).not.toBeInTheDocument()
+})
+
 test('reports the failure column as unknown when error logs are disabled', async () => {
   mockEndpoints({
     ...SUMMARY_RESPONSE,
     data_source: {
       error_log_enabled: false,
-      failure_source: 'none',
+      failure_source: 'perf_metrics',
       log_rows: 1,
     },
   })

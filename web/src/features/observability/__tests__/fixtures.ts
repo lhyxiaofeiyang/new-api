@@ -103,6 +103,7 @@ export const REQUESTS_RESPONSE: ObservabilityRequestsResponse = {
       model_name: 'gpt-4o',
       group: 'default',
       user_id: 1,
+      username: 'root',
       quota: 90_000,
       prompt_tokens: 18_000,
       completion_tokens: 6_000,
@@ -176,18 +177,16 @@ export const USAGE_RESPONSE: ObservabilityUsageResponse = {
 }
 
 /** The same summary with error logs switched off on the instance. */
+/**
+ * 错误日志关闭时的响应：后端把总调用/成功/失败/成功率整体改用 perf_metrics
+ * 派生，所以这些字段照常有值——只有「逐条失败明细」需要错误日志。
+ */
 export const SUMMARY_RESPONSE_NO_ERROR_LOG: ObservabilitySummaryResponse = {
   ...SUMMARY_RESPONSE,
   data_source: {
     error_log_enabled: false,
-    failure_source: 'none',
+    failure_source: 'perf_metrics',
     log_rows: 12_480,
-  },
-  summary: {
-    ...SUMMARY_RESPONSE.summary,
-    success_calls: 8_420,
-    failure_calls: 0,
-    success_rate: 0,
   },
   health_timeline: [],
 }

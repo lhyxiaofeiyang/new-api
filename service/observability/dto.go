@@ -127,6 +127,7 @@ type RequestItem struct {
 	ModelName        string         `json:"model_name"`
 	Group            string         `json:"group"`
 	UserId           int            `json:"user_id"`
+	Username         string         `json:"username"`
 	Quota            int            `json:"quota"`
 	PromptTokens     int            `json:"prompt_tokens"`
 	CompletionTokens int            `json:"completion_tokens"`

@@ -30,6 +30,7 @@ type monitoringRow struct {
 	ModelName        string `gorm:"column:model_name"`
 	Group            string `gorm:"column:group"`
 	UserId           int    `gorm:"column:user_id"`
+	Username         string `gorm:"column:username"`
 	Quota            int    `gorm:"column:quota"`
 	PromptTokens     int    `gorm:"column:prompt_tokens"`
 	CompletionTokens int    `gorm:"column:completion_tokens"`
@@ -75,7 +76,7 @@ func monitoringSelect() string {
 	return fmt.Sprintf(`logs.id AS id, logs.created_at AS created_at, logs.request_id AS request_id,
 	logs.token_id AS token_id, logs.token_name AS token_name,
 	logs.channel_id AS channel_id, COALESCE(channels.name, '') AS channel_name, COALESCE(channels.type, 0) AS channel_type,
-	logs.model_name AS model_name, logs.%s AS %s, logs.user_id AS user_id,
+	logs.model_name AS model_name, logs.%s AS %s, logs.user_id AS user_id, COALESCE(u.username, '') AS username,
 	logs.quota AS quota, logs.prompt_tokens AS prompt_tokens, logs.completion_tokens AS completion_tokens,
 	logs.use_time AS use_time, logs.is_stream AS is_stream, logs.other AS other, logs.content AS content`,
 		group, group)
@@ -214,6 +215,7 @@ func buildRequestItems(rows []monitoringRow, r Range, rowsAreFailures bool) []Re
 			ModelName:        row.ModelName,
 			Group:            row.Group,
 			UserId:           row.UserId,
+			Username:         row.Username,
 			Quota:            row.Quota,
 			PromptTokens:     row.PromptTokens,
 			CompletionTokens: row.CompletionTokens,

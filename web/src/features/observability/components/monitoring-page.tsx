@@ -31,6 +31,8 @@ import {
   useDataTable,
 } from '@/components/data-table'
 import { SectionPageLayout } from '@/components/layout'
+import { StatusBadge } from '@/components/status-badge'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
@@ -48,7 +50,14 @@ import { TableCell, TableRow } from '@/components/ui/table'
 import { getChannels } from '@/features/channels/api'
 import { CHANNEL_TYPES } from '@/features/channels/constants'
 import { searchApiKeys } from '@/features/keys/api'
-import { formatDateTimeStr, formatNumber, formatQuota } from '@/lib/format'
+import { ModelBadge } from '@/features/usage-logs/components/model-badge'
+import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
+import {
+  formatDateTimeStr,
+  formatNumber,
+  formatQuota,
+  formatTokens,
+} from '@/lib/format'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
@@ -206,6 +215,62 @@ function RequestDetail(props: { item: ObservabilityRequestItem }) {
   )
 }
 
+/** 与「使用日志」保持一致：用户列 = 头像 + 用户名。 */
+function UserCell(props: { item: ObservabilityRequestItem }) {
+  const name = props.item.username
+  if (!name) {
+    return props.item.user_id > 0 ? (
+      <span className='text-muted-foreground font-mono text-xs tabular-nums'>
+        #{props.item.user_id}
+      </span>
+    ) : (
+      <span className='text-muted-foreground'>-</span>
+    )
+  }
+  return (
+    <div className='flex min-w-0 items-center gap-2'>
+      <Avatar className='ring-border/60 size-6 ring-1 max-sm:hidden'>
+        <AvatarFallback
+          className='text-[11px] font-semibold'
+          style={getUserAvatarStyle(name)}
+        >
+          {getUserAvatarFallback(name)}
+        </AvatarFallback>
+      </Avatar>
+      <TruncatedCell>{name}</TruncatedCell>
+    </div>
+  )
+}
+
+/** 与「使用日志」保持一致：渠道用按 id 取色的 pill 呈现。 */
+function ChannelCell(props: { item: ObservabilityRequestItem }) {
+  const { channel_id: channelId, channel_name: channelName } = props.item
+  return (
+    <StatusBadge
+      label={channelName || `#${channelId}`}
+      autoColor={String(channelId)}
+      copyText={String(channelId)}
+      showDot={false}
+      size='sm'
+    />
+  )
+}
+
+/** 与「使用日志」保持一致：耗时用阈值 pill 呈现（> 60s 判红）。 */
+function renderLatencyBadge(ms: number) {
+  if (!ms) {
+    return <span className='text-muted-foreground/60 text-xs'>-</span>
+  }
+  return (
+    <StatusBadge
+      label={formatLatencyMs(ms)}
+      variant={ms > 60_000 ? 'danger' : 'success'}
+      copyable={false}
+      className='font-mono tabular-nums'
+    />
+  )
+}
+
 function renderStatus(
   item: ObservabilityRequestItem,
   errorLogEnabled: boolean | undefined,
@@ -214,9 +279,17 @@ function renderStatus(
   if (errorLogEnabled === false) {
     return <span className='text-muted-foreground'>-</span>
   }
-  if (!item.is_failed) return <Badge variant='secondary'>{t('Success')}</Badge>
+  if (!item.is_failed) {
+    return (
+      <StatusBadge label={t('Success')} variant='success' showDot={false} />
+    )
+  }
   return (
-    <Badge variant='destructive'>{item.fail_status_code ?? t('Failed')}</Badge>
+    <StatusBadge
+      label={String(item.fail_status_code ?? t('Failed'))}
+      variant='danger'
+      showDot={false}
+    />
   )
 }
 
@@ -343,6 +416,12 @@ export function MonitoringPage(props: MonitoringPageProps) {
         ),
       },
       {
+        id: 'username',
+        accessorKey: 'username',
+        header: t('User'),
+        cell: ({ row }) => <UserCell item={row.original} />,
+      },
+      {
         id: 'token_name',
         accessorKey: 'token_name',
         header: t('API Key'),
@@ -354,10 +433,8 @@ export function MonitoringPage(props: MonitoringPageProps) {
         id: 'channel',
         header: t('Channel'),
         cell: ({ row }) => (
-          <div className='flex min-w-0 flex-col'>
-            <TruncatedCell>
-              {row.original.channel_name || String(row.original.channel_id)}
-            </TruncatedCell>
+          <div className='flex min-w-0 flex-col items-start gap-1'>
+            <ChannelCell item={row.original} />
             <span className='text-muted-foreground text-xs'>
               {getChannelTypeLabel(row.original.channel_type, t)}
             </span>
@@ -369,7 +446,9 @@ export function MonitoringPage(props: MonitoringPageProps) {
         accessorKey: 'model_name',
         header: t('Model'),
         cell: ({ row }) => (
-          <TruncatedCell>{row.original.model_name}</TruncatedCell>
+          <div className='flex max-w-[220px] min-w-0'>
+            <ModelBadge modelName={row.original.model_name} wrapText />
+          </div>
         ),
       },
       {
@@ -381,22 +460,12 @@ export function MonitoringPage(props: MonitoringPageProps) {
         ),
         cell: ({ row }) => (
           <span className='font-mono text-xs tabular-nums'>
-            {formatTokenCount(row.original.prompt_tokens)} /{' '}
-            {formatTokenCount(row.original.completion_tokens)} /{' '}
-            {formatTokenCount(row.original.cached_tokens)} /{' '}
+            {formatTokens(row.original.prompt_tokens)} /{' '}
+            {formatTokens(row.original.completion_tokens)} /{' '}
+            {formatTokens(row.original.cached_tokens)} /{' '}
             <span className='font-semibold'>
-              {formatTokenCount(row.original.total_tokens)}
+              {formatTokens(row.original.total_tokens)}
             </span>
-          </span>
-        ),
-      },
-      {
-        id: 'quota',
-        accessorKey: 'quota',
-        header: t('Quota'),
-        cell: ({ row }) => (
-          <span className='font-mono text-xs tabular-nums'>
-            {formatQuota(row.original.quota)}
           </span>
         ),
       },
@@ -404,11 +473,7 @@ export function MonitoringPage(props: MonitoringPageProps) {
         id: 'use_time_ms',
         accessorKey: 'use_time_ms',
         header: t('Duration'),
-        cell: ({ row }) => (
-          <span className='font-mono text-xs tabular-nums'>
-            {formatLatencyMs(row.original.use_time_ms)}
-          </span>
-        ),
+        cell: ({ row }) => renderLatencyBadge(row.original.use_time_ms),
       },
       {
         id: 'ttft_ms',
@@ -426,7 +491,7 @@ export function MonitoringPage(props: MonitoringPageProps) {
         header: t('Streaming'),
         cell: ({ row }) =>
           row.original.is_stream ? (
-            <Badge variant='secondary'>{t('Yes')}</Badge>
+            <StatusBadge label={t('Yes')} variant='info' showDot={false} />
           ) : (
             <span className='text-muted-foreground'>-</span>
           ),
@@ -436,9 +501,12 @@ export function MonitoringPage(props: MonitoringPageProps) {
         header: t('Retry Chain'),
         cell: ({ row }) =>
           row.original.retry_chain.length > 0 ? (
-            <Badge variant='outline' className='tabular-nums'>
-              {row.original.retry_chain.length}
-            </Badge>
+            <StatusBadge
+              label={String(row.original.retry_chain.length)}
+              variant='warning'
+              copyable={false}
+              className='tabular-nums'
+            />
           ) : (
             <span className='text-muted-foreground'>-</span>
           ),

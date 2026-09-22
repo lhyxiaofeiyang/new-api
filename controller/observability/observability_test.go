@@ -45,6 +45,12 @@ func newEmptyDB(t *testing.T) {
 		name TEXT,
 		type INTEGER
 	)`).Error)
+	// 请求明细的用户列走 users JOIN，夹具同样需要该表。
+	require.NoError(t, db.Exec(`CREATE TABLE users (
+		id INTEGER PRIMARY KEY,
+		username TEXT,
+		quota INTEGER
+	)`).Error)
 
 	previousLogDB, previousDB := model.LOG_DB, model.DB
 	model.LOG_DB, model.DB = db, db

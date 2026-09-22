@@ -107,9 +107,18 @@ var sortColumns = map[string]string{
 }
 
 // consumeQuery 构造消费日志的基础查询（含渠道 LEFT JOIN，渠道名只能来自 channels）。
+// usersJoin 只暴露 id/username 两列。users 表同样有 quota、status 等列，直接整表 JOIN 会
+// 让本包里未限定表名的列（如汇总 SQL 的 quota）变成 ambiguous column name，实测会让
+// /summary 直接报错；用派生表把命名空间收紧，是唯一不会随 users 加列而回归的写法。
+//
+// 注意：users 与 channels 一样位于主库；当 LOG_SQL_DSN 指向独立日志库时该 JOIN 会失效，
+// 与本包既有的 channels JOIN 假设一致（见 UPGRADE-MERGE / CHANGELOG 的说明）。
+const usersJoin = "LEFT JOIN (SELECT id, username FROM users) AS u ON u.id = logs.user_id"
+
 func consumeQuery(r Range, f Filters) *gorm.DB {
 	q := model.LOG_DB.Table("logs").
 		Joins("LEFT JOIN channels ON channels.id = logs.channel_id").
+		Joins(usersJoin).
 		Where("logs.type = ?", model.LogTypeConsume).
 		Where("logs.created_at >= ? AND logs.created_at < ?", r.Start, r.End)
 	return applyFilters(q, f)
@@ -119,6 +128,7 @@ func consumeQuery(r Range, f Filters) *gorm.DB {
 func errorQuery(r Range, f Filters) *gorm.DB {
 	q := model.LOG_DB.Table("logs").
 		Joins("LEFT JOIN channels ON channels.id = logs.channel_id").
+		Joins(usersJoin).
 		Where("logs.type = ?", model.LogTypeError).
 		Where("logs.created_at >= ? AND logs.created_at < ?", r.Start, r.End)
 	return applyFilters(q, f)

@@ -49,6 +49,9 @@ func TestGetRequestsIncludesOtherDerivedFields(t *testing.T) {
 	assert.Equal(t, 1, first.ChannelType)
 	assert.Equal(t, "gpt-4o", first.ModelName)
 	assert.Equal(t, "default", first.Group)
+	// 用户列来自 users JOIN（username 必须一并返回）。
+	assert.Equal(t, 1, first.UserId)
+	assert.Equal(t, "root", first.Username)
 	assert.Equal(t, 300, first.TotalTokens)
 	assert.Equal(t, 50, first.CachedTokens)
 	assert.Equal(t, 0.5, first.CacheRatio)

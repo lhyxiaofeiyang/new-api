@@ -150,6 +150,7 @@ export interface ObservabilityRequestItem {
   model_name: string
   group: string
   user_id: number
+  username: string
   quota: number
   prompt_tokens: number
   completion_tokens: number

@@ -69,17 +69,18 @@ test('renders the totals from the summary payload', async () => {
   expect(screen.getByText('Success Rate')).toBeVisible()
 })
 
-test('warns and withholds failure numbers when error logs are disabled', async () => {
+test('warns about failure details but still shows the success rate when error logs are disabled', async () => {
   mockSummary(SUMMARY_RESPONSE_NO_ERROR_LOG)
   await renderOverview()
 
   expect(screen.getByText('Failure details are unavailable')).toBeVisible()
   expect(
     screen.getByText(
-      'Error logs are disabled on this instance, so failure counts, the success rate and the request health timeline show no data.'
+      'Per-request failure details require error logs, which are disabled on this instance'
     )
   ).toBeVisible()
-  expect(screen.queryByText('100.00%')).not.toBeInTheDocument()
+  // 成功率由后端从 perf_metrics 派生，与错误日志开关无关，必须照常展示。
+  expect(screen.getByText('99.64%')).toBeVisible()
 })
 
 test('does not warn when error logs are enabled', async () => {

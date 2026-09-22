@@ -26,6 +26,7 @@ type logRow struct {
 	tokenId          int
 	tokenName        string
 	channelId        int
+	userId           int
 	modelName        string
 	group            string
 	promptTokens     int
@@ -46,6 +47,7 @@ func insertLog(t *testing.T, db *gorm.DB, row logRow) {
 		"token_id":          row.tokenId,
 		"token_name":        row.tokenName,
 		"channel_id":        row.channelId,
+		"user_id":           row.userId,
 		"model_name":        row.modelName,
 		"group":             row.group,
 		"prompt_tokens":     row.promptTokens,
@@ -72,6 +74,14 @@ func setupDB(t *testing.T) *gorm.DB {
 		name TEXT,
 		type INTEGER
 	)`).Error)
+	// 请求监控的用户列来自 users JOIN，夹具必须提供该表。
+	// 真库的 users 表同样有 quota 列：夹具必须还原这一点，否则
+	// 「未限定列名变歧义」这类 JOIN 事故在测试里永远暴露不出来。
+	require.NoError(t, db.Exec(`CREATE TABLE users (
+		id INTEGER PRIMARY KEY,
+		username TEXT,
+		quota INTEGER
+	)`).Error)
 
 	previousLogDB := model.LOG_DB
 	previousDB := model.DB
@@ -94,10 +104,12 @@ func setupFixture(t *testing.T) (*gorm.DB, time.Time) {
 
 	require.NoError(t, db.Table("channels").Create(map[string]any{"id": 10, "name": "openai-ch", "type": 1}).Error)
 	require.NoError(t, db.Table("channels").Create(map[string]any{"id": 11, "name": "claude-ch", "type": 14}).Error)
+	require.NoError(t, db.Table("users").Create(map[string]any{"id": 1, "username": "root"}).Error)
+	require.NoError(t, db.Table("users").Create(map[string]any{"id": 2, "username": "gaoxiaoqi"}).Error)
 
 	insertLog(t, db, logRow{
 		createdAt: hoursAgo(3), logType: model.LogTypeConsume, requestId: "req-1",
-		tokenId: 1, tokenName: "key-a", channelId: 10, modelName: "gpt-4o", group: "default",
+		tokenId: 1, tokenName: "key-a", channelId: 10, userId: 1, modelName: "gpt-4o", group: "default",
 		promptTokens: 100, completionTokens: 200, quota: 500000, useTime: 3, isStream: true,
 		other: `{"cache_tokens":50,"cache_ratio":0.5,"frt":120,"model_price":0.5,` +
 			`"request_policy":[{"channel_id":10,"elapsed_ms":10,"decision":{"action":"retry"}},` +
@@ -105,13 +117,13 @@ func setupFixture(t *testing.T) (*gorm.DB, time.Time) {
 	})
 	insertLog(t, db, logRow{
 		createdAt: hoursAgo(2), logType: model.LogTypeConsume, requestId: "req-2",
-		tokenId: 2, tokenName: "key-b", channelId: 11, modelName: "claude-3", group: "vip",
+		tokenId: 2, tokenName: "key-b", channelId: 11, userId: 2, modelName: "claude-3", group: "vip",
 		promptTokens: 10, completionTokens: 20, quota: 500000, useTime: 2,
 		other: `{"frt":80}`,
 	})
 	insertLog(t, db, logRow{
 		createdAt: hoursAgo(1), logType: model.LogTypeConsume, requestId: "req-3",
-		tokenId: 2, tokenName: "key-b", channelId: 11, modelName: "claude-3", group: "vip",
+		tokenId: 2, tokenName: "key-b", channelId: 11, userId: 2, modelName: "claude-3", group: "vip",
 		promptTokens: 5, completionTokens: 5, useTime: 1,
 		other: `{}`,
 	})

@@ -41,24 +41,12 @@ export interface VChartSpec {
 }
 
 /**
- * VChart renders into the live DOM, so CSS variables resolve here. Using the
- * semantic `--chart-*` tokens keeps every chart on the active theme instead of
- * pinning per-theme hex values.
+ * VChart draws to a <canvas>, which cannot resolve CSS `var(--chart-*)`
+ * references — passing them left the series on VChart's fallback colours and
+ * made these charts look unlike every other chart in the app. The rest of the
+ * dashboard (flow/model/user charts, rankings, pricing) simply lets VChart's own
+ * `light`/`dark` palette apply via the `theme` prop, so do the same here.
  */
-const CHART_COLOR_TOKENS = [
-  'var(--chart-1)',
-  'var(--chart-2)',
-  'var(--chart-3)',
-  'var(--chart-4)',
-  'var(--chart-5)',
-]
-
-export function getObservabilityChartColors(count: number): string[] {
-  return Array.from(
-    { length: Math.max(1, count) },
-    (_, index) => CHART_COLOR_TOKENS[index % CHART_COLOR_TOKENS.length]
-  )
-}
 
 /** Stacked series need the metric folded into the row as a series field. */
 function toSeriesValues(
@@ -104,7 +92,6 @@ export function buildTrafficTrendSpec(
       { orient: 'left', type: 'linear' },
     ],
     legends: { visible: showTokens, orient: 'top' },
-    color: getObservabilityChartColors(metrics.length),
     title: {
       visible: true,
       text: t('Traffic Trend'),
@@ -132,7 +119,6 @@ export function buildHourlyActivitySpec(
       { orient: 'left', type: 'linear' },
     ],
     legends: { visible: false },
-    color: getObservabilityChartColors(1),
     title: {
       visible: true,
       text: t('24h Activity Distribution'),
@@ -166,7 +152,6 @@ export function buildUsageTrendSpec(
       { orient: 'left', type: 'linear' },
     ],
     legends: { visible: false },
-    color: getObservabilityChartColors(1),
     title: {
       visible: true,
       text: `${t('Trend')} · ${metricLabel}`,
@@ -207,7 +192,6 @@ export function buildCostCompositionSpec(
       { orient: 'left', type: 'linear' },
     ],
     legends: { visible: false },
-    color: getObservabilityChartColors(values.length),
     title: {
       visible: true,
       text: t('Cost Composition'),
