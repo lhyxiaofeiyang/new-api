@@ -2,6 +2,7 @@ package router
 
 import (
 	"github.com/QuantumNous/new-api/controller"
+	obscontroller "github.com/QuantumNous/new-api/controller/observability"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/service/authz"
 
@@ -346,6 +347,14 @@ func SetApiRouter(router *gin.Engine) {
 		logRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
 		{
 			logRoute.GET("/token", middleware.TokenAuthReadOnly(), controller.GetLogByKey)
+		}
+		observabilityRoute := apiRouter.Group("/observability")
+		observabilityRoute.Use(middleware.AdminAuth())
+		{
+			observabilityRoute.GET("/summary", obscontroller.GetSummary)
+			observabilityRoute.GET("/requests", obscontroller.GetRequests)
+			observabilityRoute.GET("/requests/export", obscontroller.ExportRequests)
+			observabilityRoute.GET("/usage", obscontroller.GetUsage)
 		}
 		groupRoute := apiRouter.Group("/group")
 		groupRoute.Use(middleware.AdminAuth())
