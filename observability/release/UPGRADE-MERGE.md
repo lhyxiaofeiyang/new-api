@@ -28,6 +28,9 @@ bash observability/scripts/sync-upstream.sh --apply   # 冲突清理后正式提
 | 1 | `router/api-router.go` | 新增 `observabilityRoute := apiRouter.Group("/observability")` 与 4 条 GET | 低 | 重新按当前文件写法插入同样 6 行 |
 | 2 | `web/src/hooks/use-sidebar-data.ts` | `navGroups` 中新增 `observability` 分组（紧随 `general`） | 中（上游常动导航） | 在新版 `navGroups` 内重新插入该分组对象 |
 | 3 | `web/src/i18n/locales/*.json` | 追加本功能的新 key | 高（JSON 大文件） | 以上游版本为准，重新追加缺失 key（脚本 `--apply` 会提示缺失 key 列表） |
+| 4 | `web/src/routeTree.gen.ts` | **生成物**（TanStack Router 由 `web/rsbuild.config.ts` 的 `@tanstack/router-plugin` 自动重生成），+45 行纯追加的路由注册 | 低 | **不要手改**：合并后跑一次 `bun run build` 即自动重生成；冲突时直接 `git checkout --theirs` 上游版本再重新构建 |
+
+> 判断依据：`web/src/routeTree.gen.ts` 头部为 `/* eslint-disable */` + `// @ts-nocheck`，且 `web/rsbuild.config.ts:93` 注册了 `tanstackRouter(...)` 插件——该文件是构建期产物，非人工维护。
 
 **其余全部是新增文件**（`controller/observability/`、`service/observability/`、`web/src/features/observability/`、`web/src/routes/_authenticated/observability/`），上游不会碰到，天然无冲突。
 

@@ -105,7 +105,9 @@ web/src/i18n/locales/*.json         ← 追加 key（7 个语言文件；key 用
 }
 ```
 
-**侵入点总计 3 处**（均在计划内、均极小）：`router/api-router.go`、`use-sidebar-data.ts`、`i18n/locales/*.json`。
+**侵入点总计 4 处**（3 处手改 + 1 处生成物，均在计划内、均极小）：
+`router/api-router.go`（手改约 6 行）、`use-sidebar-data.ts`（手改约 10 行）、`i18n/locales/*.json`（追加 key）、
+`web/src/routeTree.gen.ts`（**生成物**，由 `@tanstack/router-plugin` 自动重生成，+45 行纯追加，不手改）。
 `app-sidebar.tsx` **无需改动**（其注释已声明新增视图只需注册）。
 
 ### 3.3 UI 风格延续策略
