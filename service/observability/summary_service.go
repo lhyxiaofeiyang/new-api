@@ -148,7 +148,10 @@ func getFailureStats(r Range) (int64, string) {
 }
 
 // perfMetricsCounters 在错误日志关闭时用 perf_metrics 的模型×分组 5 分钟桶
-// 补出粗粒度成功率；调用量/token/额度仍来自 logs，避免口径混用。
+// 补齐成功率口径：此时 total_calls / success_calls / failure_calls / success_rate
+// 四项**整体**取自 perf_metrics 以保证自洽；其余指标（tokens / 额度 / 延迟 / Top 榜）
+// 仍来自 logs。注意因此该状态下 Total Calls 卡片与请求明细表的行数**不同口径**
+// （实测 12837 vs 14081），前端需依据 data_source.failure_source 标注来源。
 func perfMetricsCounters(r Range, counters SummaryCounters) SummaryCounters {
 	summaries, err := model.GetPerfMetricsSummaryAll(r.Start, r.End, nil)
 	if err != nil {

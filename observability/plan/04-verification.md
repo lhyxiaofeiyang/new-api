@@ -61,14 +61,55 @@
 
 | 项 | 状态 |
 |---|---|
-| G5 `go test` 新包全绿（含 controller 测试） | 未验证（修复中） |
-| G6 侵入点审计（白名单：`router/api-router.go`、`use-sidebar-data.ts`、`i18n/locales/`、`routeTree.gen.ts`） | 未验证 |
-| G7a/b/c 前端 typecheck / lint / vitest | 未验证 |
-| G8 路由文件 / 导航顺序（observability 紧随 general）/ i18n key 差集 | 未验证 |
-| T6 数字一致性（API 返回 vs 手工 SQL，真实数据脱敏副本） | 未验证 |
+| G1 `go build ./...` | **PASS**（13:36 我独立复跑，`GOPROXY=goproxy.cn GOSUMDB=off`） |
+| G2 `go vet` 新包 | **PASS**（同上） |
+| G5 `go test` 新包 | **PASS**（13:36 我独立复跑：`ok controller/observability 1.775s` / `ok service/observability 2.770s`） |
+| G3 只读审计 | **PASS**（产品代码 Create/Update/Delete/Save/Exec/AutoMigrate/Raw **0 命中**） |
+| G4 方言函数审计 | **PASS**（0 命中；分桶全在 Go 侧） |
+| G6 侵入点审计（白名单 4 项） | 未跑（待前端收尾后执行 `obs-gate.sh`） |
+| G7a typecheck | **PASS**（`tsgo -b` → exit 0） |
+| G7b lint | **FAIL（待收口）**：全库 185 error，其中 3 条来自我们新增文件（均 `no-nested-ternary`）；目标 = 182 条 pre-existing、observability 贡献 0 |
+| G7c vitest | **PASS**：全库 174 文件 / 2148 用例全绿；observability 专项 9 文件 / 55 用例全绿 |
+| G7d build | **PASS**（rsbuild `ready built in 4.78s`） |
+| G8 路由 / 导航顺序 / i18n | **PASS**：`chat:60 → general:76 → **observability:114** → personal:135 → admin:156`；7 语言各 **+56 行**；`routeTree.gen.ts` **+45/-0**；上游 `web/src/components/` **零改动** |
+| T6 数字一致性 | **PASS（见下节）** |
 | T7 交叉编译产物（`ELF 64-bit ... statically linked`）与 sha256 | 未验证 |
 | 部署（T8） | **未执行**（需用户授权） |
 
 ### 决策记录
 
 - **`web/src/routeTree.gen.ts`**：TanStack Router 由 `web/rsbuild.config.ts:93` 的 `@tanstack/router-plugin` 自动生成的构建产物（`+45` 行纯追加）。**已获用户批准**纳入侵入点白名单（作为生成物，不手改，构建时自动重生成）。证据：文件头 `/* eslint-disable */` + `// @ts-nocheck`。
+
+---
+
+## 2026-09-22 14:22 T6 数字一致性（真实数据交叉核对）**PASS**
+
+**方法**：从生产库取**只读备份**（`sqlite3 "file:/opt/new-api/current/one-api.db?mode=ro" ".backup ..."`，未触碰生产库），拉回本地 scratch，另存一份原始副本供手工 SQL 对照；写临时程序 `t6verify/main.go` **直接调用真实服务层函数**（`obs.GetSummary` / `obs.GetUsage` / `obs.GetRequests`），并复现应用真实启动序列 `common.InitEnv() → model.InitDB() → model.InitLogDB()`（缺 `InitLogDB` 会因 `model.LOG_DB == nil` panic —— 脚手架问题，非产品缺陷）。
+
+**窗口**：`range=custom`，`start=1788278400`（2026-09-02 00:00 +08）→ `end=1790058148`。
+
+| 指标 | 服务层输出 | 手工 SQL | 判定 |
+|---|---|---|---|
+| prompt_tokens | 1 108 419 339 | 1 108 419 339 | 一致 |
+| completion_tokens | 10 554 105 | 10 554 105 | 一致 |
+| total_tokens | 1 118 973 444 | 1 118 973 444 | 一致 |
+| cached_tokens（`other.cache_tokens`） | 1 040 095 111 | 1 040 095 111 | 一致 |
+| total_quota | 25 795 184 887 | 25 795 184 887 | 一致 |
+| total_cost_usd（`quota/500000`） | 51 590.3698 | 51 590.3698 | 一致 |
+| average_latency_ms（`sum(use_time)*1000/日 use_time>0 计数`） | 16 578.36 | `232843*1000/14045 = 16578.36` | 一致 |
+| stream_calls | 11 170 | 11 170 | 一致 |
+| unique_channels / unique_models | 9 / 25 | 9 / 25 | 一致 |
+| Top5 模型（名 / 调用 / quota） | LongCat-2.0 10794/14817297418 … | 完全相同 | 一致 |
+| `log_rows` | 14 081 | `count(*) type=2` = 14 081 | 一致 |
+| `unique_tokens` | **13** | **14** | **服务正确**：实现为 `COUNT(DISTINCT CASE WHEN token_id > 0 THEN token_id END)`，手工 SQL 未加 `token_id>0`（存在 token_id=0 的行） |
+| `total_calls` / `success_calls` | **12 837 / 12 288** | `perf_metrics`: `sum(request_count)=12837`、`sum(success_count)=12288` | 一致（口径来自 `perf_metrics`，见下方发现） |
+
+### 发现（T6 副产物，2 项）
+
+1. **口径不一致（已修注释）**：`ERROR_LOG_ENABLED=false` 时 `perfMetricsCounters` 把 `total_calls/success_calls/failure_calls/success_rate` **四项整体**换成 `perf_metrics` 聚合，而代码注释原写「调用量/token/额度仍来自 logs」——**注释与代码不符**。后果：该状态下「Total Calls」卡片 = 12837（perf_metrics），而请求明细表与 `log_rows` = 14081（logs），**同屏两个"调用量"**。已把注释改为真实口径（`service/observability/summary_service.go:150`），并记为**前端提示待办**：需依 `data_source.failure_source` 标注来源。生产开启 `ERROR_LOG_ENABLED=true` 后该分支不生效，卡片与表格口径将自动统一（`failure_source=error_log`）。
+2. **失败率高龄窗口假报**：早于 `LOG_RETENTION_DAYS` 的窗口失败数恒为 0 → 会显示 100%。**未处理**（超出本轮范围），记为已知限制。
+
+### 未验证 / 已知限制（诚实标注）
+
+- `ERROR_LOG_ENABLED=true` 打开后失败事件是否真实落库：**未验证**（需一次真实失败请求 + 生产变更）。
+- ClickHouse 日志库（`LOG_SQL_DSN`）下 `LEFT JOIN channels` 不成立：**未处理**。生产实况已核实为**不适用**（unit `new-api.service` 无任何 `Environment=`、未装 ClickHouse、`LOG_SQL_DSN` 未设，日志与主库同库）。
