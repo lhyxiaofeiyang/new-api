@@ -113,3 +113,39 @@
 
 - `ERROR_LOG_ENABLED=true` 打开后失败事件是否真实落库：**未验证**（需一次真实失败请求 + 生产变更）。
 - ClickHouse 日志库（`LOG_SQL_DSN`）下 `LEFT JOIN channels` 不成立：**未处理**。生产实况已核实为**不适用**（unit `new-api.service` 无任何 `Environment=`、未装 ClickHouse、`LOG_SQL_DSN` 未设，日志与主库同库）。
+
+---
+
+## 2026-09-22 14:36 端到端 HTTP 层验证 **PASS**
+
+单元测试只覆盖到 service/handler 内部，故补两层真实验证。
+
+### A. 二进制实跑 + 路由注册（本机 darwin 产物，独立端口 13000，对副本库）
+
+启动横幅与 API 自报版本一致，证明构建注入生效：
+
+```
+高小鸡 v1.0.0-rc.40-obs.1  ready in 151 ms
+$ curl /api/status  ->  {"success":true,"data":{"version":"v1.0.0-rc.40-obs.1", ...}}
+```
+
+| 路径 | HTTP | 判定 |
+|---|---|---|
+| `/api/observability/summary` / `requests` / `usage` / `requests/export` | **401** | 路由已注册且 `middleware.AdminAuth()` 生效 |
+| `/api/log/stat`、`/api/log/`、`/api/channel/`（既有对照） | 401 | 鉴权行为与既有端点一致 |
+| `/api/observability/nonexistent` | **404** | **反证**：401 不是兜底，路由确实按注册表命中 |
+
+### B. 参数解析 → service → 响应封装（gin + 真实 handler + httptest，绕开鉴权）
+
+| 用例 | 结果 |
+|---|---|
+| `/summary?range=custom&start=…&end=…` | HTTP 200；`total_calls=12837 / success_calls=12288 / failure_calls=549 / success_rate=95.72 / total_tokens=1118973444 / cached_tokens=1040095111 / total_cost_usd=51590.3698 / average_latency_ms=16578.36 / average_ttft_ms=5288.97 / stream_calls=11170 / unique_tokens=13 / channels=9 / models=25` —— **与 T6 服务层结果完全一致** |
+| `/requests?...&page=1&page_size=2` | 200；真实明细含 `channel_name:"Command Code"`（**证明 `LEFT JOIN channels` 在生产数据上生效**）、`retry_chain`、`is_failed`、`fail_status_code`、`ttft_ms`、`cache_ratio` |
+| `/usage?...&dimension=token&limit=3` | 200；逐 key 的 `calls / success_calls / failure_calls / tokens / cost_usd / average_latency_ms / share` |
+| `range=nonsense` | `{"success":false,"message":"不支持的 range: nonsense"}` —— 不返回 500 |
+| `dimension=not-a-dimension` | `{"success":false,"message":"不支持的 dimension: not-a-dimension"}` |
+| `page=-5&page_size=999999` | **被收敛为 `page=1, page_size=500`**，符合契约 ≤500 |
+
+`{"success":false,...}` 配 HTTP 200 是**上游既有约定**（`common/gin.go:199 ApiError`），非本改造引入。
+
+（临时 harness `t6http/` 用后即删，未入库。）
