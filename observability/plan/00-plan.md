@@ -1,7 +1,7 @@
 # New API 可观测性看板 — 实施计划
 
 - **上游**：QuantumNous/new-api ｜ **Fork**：`lhyxiaofeiyang/new-api`
-- **基线**：`v1.0.0-rc.40` ｜ **开发分支**：`feat/observability`（`main` 仅镜像上游）
+- **基线**：`upstream/main` HEAD（= `v1.0.0-rc.40` + `#7504`，已对齐） ｜ **开发分支**：`feat/observability`（`main` 仅镜像上游）
 - **本地路径**：`~/Documents/personal/project/new-api`
 - **目标页**：仪表盘 / 请求监控 / 用量分析（维度下沉到 **API Key（令牌） + 渠道**）
 - **参照物**：CPA-Manager-Plus 的信息结构（**不照搬其 UI 与代码**）
@@ -27,14 +27,14 @@
 
 | # | 决策 | 取值 |
 |---|---|---|
-| 1 | 基线版本 | **rc.40**（服务器 rc.39，部署时同步升级） |
+| 1 | 基线版本 | **upstream/main HEAD**（= rc.40 + #7504，已 rebase 对齐；服务器 rc.39 → 部署时升级）|
 | 2 | 分支策略 | **双分支**：`main` 只镜像上游；全部改动在 `feat/observability` |
 | 3 | 侵入红线 | **只新增文件 + 极少数注册点**；不改现有页面 / API / schema |
-| 4 | 导航落位 | **新增独立导航分组**，置于「常规」分组之后 |
+| 4 | 导航落位 | **新增独立导航分组「可观测性」，紧随「常规」分组之后**（已确认）|
 | 5 | herdr 编排 | 4 个 agent：dev-backend / dev-frontend / test / review |
 | 6 | fork 形态 | public fork（GitHub 不支持 private fork） |
 | 7 | 数据层 | 同进程 GORM **只读**查 `logs`；**零新表**；代码层禁止写操作 |
-| 8 | 失败率 | 前端仅**只读状态提示**；不代改生产配置 |
+| 8 | 失败率 | **已授权**：部署时开启 `ERROR_LOG_ENABLED=true`（含 unit 备份与回滚点）；代码仍按可降级实现 |
 | 9 | DoD 降级 | 去掉 reasoning_tokens；cache 合并展示；不做凭证模块 |
 | 10 | 验证标准 | **数字一致性优先**（对比手工 SQL），加 vitest + Go 单测 |
 | 11 | 部署 | 本地交叉编译 → 二进制替换（`.old` 回滚）→ 沿用 `/opt/new-api/current` |
@@ -122,7 +122,7 @@ web/src/i18n/locales/*.json         ← 追加 key（7 个语言文件；key 用
 - **只读**：复用进程内 GORM 连接（`model.DB`），新查询一律 `SELECT`；任何写操作视为缺陷。
 - **不做预聚合/rollup**：实测 1.2 万行规模聚合 12–17 ms。数据量增长后按 CPAMP 的游标 rollup 模式追加（架构预留）。
 - **三库兼容**：时间区间用参数化条件，分桶在 Go 侧；不写方言函数；`logs.other` 在 Go 侧反序列化。
-- **失败率**：依赖 `ERROR_LOG_ENABLED`（默认 false）。未开启时降级为 `perf_metrics` 的模型×分组成功率 + 前端提示。
+- **失败率**：依赖 `ERROR_LOG_ENABLED`。**已获授权在部署时开启**（默认 false）；代码仍按"开启/未开启"两种状态实现，未开启时降级为 `perf_metrics` 的模型×分组成功率 + 前端提示，不显示假 0。
 
 ---
 
@@ -175,9 +175,10 @@ web/src/i18n/locales/*.json         ← 追加 key（7 个语言文件；key 用
 | 无失败日志时"成功率"口径 | 数字误导 | 前端显式标注数据来源与口径 |
 | 服务器停机窗口 | 短暂不可用 | 沿用既有约定（停机约 3 秒），选低峰执行并留 `.old` |
 
-**开放问题（需你拍板）**
-- Q-A：导航分组理解确认——新增独立分组「可观测性」，位置紧随「常规」分组之后（而非在「常规」分组内加三条目）。**默认按此执行**。
-- Q-B：失败率是否开启 `ERROR_LOG_ENABLED`（生产改动，需你单独授权；不开启则该项降级）。
+**已确认结论（原开放问题）**
+- Q-A 导航落位：新增独立分组「可观测性」，位置**紧随「常规」分组之后**。—— 已确认
+- Q-B 失败率：**已授权**在部署时开启 `ERROR_LOG_ENABLED=true`（须先备份 unit 文件留回滚点）。—— 已确认
+- Q-C 基线：对齐 **upstream/main HEAD**（rc.40 + #7504），不锁 tag。—— 已确认
 
 ---
 

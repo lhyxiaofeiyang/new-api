@@ -69,7 +69,31 @@ ssh xiaoqi-lighthouse '
 '
 ```
 
-## 6. 与本次改造同时决定的事项（需单独授权）
+## 6. 已授权的生产改动（按此执行）
 
-- rc.39 → rc.40 的版本升级（基线对齐）
-- `ERROR_LOG_ENABLED=true`（失败明细所需；需先备份 unit 文件留回滚点）
+### 6.1 版本升级（rc.39 → 本次构建）
+
+随二进制替换一并完成；旧二进制已备份为 `new-api.old.<ts>`，回滚见第 5 节。
+
+### 6.2 开启错误日志（失败率所需，已授权）
+
+```bash
+ssh xiaoqi-lighthouse '
+  set -e
+  U=$(systemctl list-units --type=service --no-legend | awk "/new-api/{print \$1; exit}")
+  echo "unit=$U"
+  cp /etc/systemd/system/$U /etc/systemd/system/$U.bak-$(date +%Y%m%d-%H%M%S)   # 回滚点
+  mkdir -p /etc/systemd/system/$U.d
+  printf "[Service]\nEnvironment=ERROR_LOG_ENABLED=true\n" > /etc/systemd/system/$U.d/error-log.conf
+  systemctl daemon-reload && systemctl restart $U
+  sleep 3 && systemctl is-active $U
+'
+```
+
+验证：制造一次失败请求（或用管理端渠道测试触发），确认 `logs` 表出现 `type=5` 记录：
+
+```bash
+ssh xiaoqi-lighthouse 'sqlite3 "file:/opt/new-api/current/one-api.db?mode=ro" "select count(*) from logs where type=5;"'
+```
+
+回滚该开关：删除 `/etc/systemd/system/<unit>.d/error-log.conf` → `systemctl daemon-reload && systemctl restart <unit>`。

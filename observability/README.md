@@ -25,7 +25,7 @@ observability/
 
 - **上游**：[QuantumNous/new-api](https://github.com/QuantumNous/new-api)
 - **本 fork**：`lhyxiaofeiyang/new-api`
-- **基线**：`v1.0.0-rc.40`
+- **基线**：`upstream/main`（= `v1.0.0-rc.40` + `#7504`，已 rebase 对齐）
 - **开发分支**：`feat/observability`（`main` 仅镜像上游）
 - **目标**：在 New API 内新增「可观测性」三页（仪表盘 / 请求监控 / 用量分析），
   数据下沉到 **API Key（令牌）+ 渠道** 维度，参照 CPA-Manager-Plus 的信息结构，但沿用 New API 自身的 UI 规范与技术栈。
