@@ -358,3 +358,50 @@ $ shasum -a 256 new-api-linux-amd64
 ### 上游合并（2026-09-24，upgrade1）
 
 - 合并 `upstream/main` = `d04c118c8`（7 提交 / 11 文件）入 `feat/observability`，合并提交 `f9c78c517`，**冲突 0**；门 `GATE: ALL PASS`（G1–G8b）、前端 176 文件 / 2196 用例、Go 全量构建与我方两包全绿；diff 基线随之由 `9310231b3` 前移至 `d04c118c8`（新基线复算 59 文件 / +9639 −12，明细见 `UPGRADE-MERGE.md` §6）。**上文旧数字按旧基线计得，此处只加注、不改。**
+
+### 生产上线（2026-09-24，obs.7）
+
+**本 fork 首次真正上线生产。** 生产机 `xiaoqi-lighthouse` 于 **12:17–12:20（+08）** 将 `/opt/new-api/current/new-api` 由 `v1.0.0-rc.39`（sha256 `c2d488fc…`）替换为 **`v1.0.0-rc.40-obs.7`**（sha256 `9bcf60c1…`，138,682,530 字节，内嵌 bundle `index.ca3306be08.js`）；构建自 HEAD `16b3a7c75`（已合并 `upstream/main` `d04c118c8`）。四路由 `/api/observability/{summary,requests,requests/export,usage}` 免鉴权 **401**、`/nonexistent` **404**、`/api/status` 版本串 **`v1.0.0-rc.40-obs.7`**、外网 `/v1/models` **401**、日志无 panic/fatal、**零迁移**（38 表 / `logs` 21 列 / `.schema` 哈希 / DB inode 全不变）。完整记录见 `deploy.md` §8。
+
+**同轮已开启 `ERROR_LOG_ENABLED=true`**（生产唯一配置改动，经 systemd drop-in `/etc/systemd/system/new-api.service.d/error-log.conf`，原 unit 未改；unit 回滚点 `/opt/new-api/data/new-api.service.bak-errlog-20260924-123019`，删 drop-in + `daemon-reload` + `restart` 即可回滚）。生效证据：`systemctl show new-api -p Environment` = `Environment=ERROR_LOG_ENABLED=true`。
+
+**对口径 v2 的影响（生产侧从此转入准确统计）**：
+
+- 上方口径说明里 v2 的两分支中，生产此前一直落在**关闭侧**（`perf_metrics` 估算，前端据 `failure_source === 'perf_metrics'` 显示「失败为估算值，开启错误日志后转为准确统计」）。本次开启后，生产转入**开启侧**：失败取窗口内 `logs.type = 5` 的**准确行数**，`failure_source = error_log`，前端那三处「需错误日志」标注的触发条件**在生产不再成立**——即「失败为估算值」将转为准确统计。
+- **历史窗口内的失败仍是 0，不是修复出来的**：开启只覆盖**开启之后**的失败。生产 `logs.type=5` 在开启时与开启后均为 **0**（`select count(*) from logs where type=5` = 0），因为开关生效前没有错误日志行；这与本地实例此前的验证结论一致。
+- **`type=5` 只在渠道级失败时写入**：需「已选中渠道、上游返回错误」才落行；**路由前**失败（如不存在的 model）在 `middleware/distributor.go` 提前 abort，**不**落 `type=5`（实测该情形前后计数不变）。因此开启后 `type=5` 是否增长，取决于是否真的发生渠道级失败。
+- **一处未从免鉴权侧核实的点（如实记录）**：`data_source.failure_source` 是否已翻为 `error_log`，需以管理员凭证登录看板确认（`/api/status` 不暴露该字段）；服务侧只能证到环境变量已生效。
+
+> 本轮为**文档回填**：只增补本节与 `deploy.md` §8，**上文（含 obs.1–obs.6 与 upgrade1）一字未改、未删**。
+
+### 挂账：审查未修项与未决口径（2026-09-24 关闭本轮开发会话时登记）
+
+> 完整审查报告（未入库，本地归档）：`.review/review-full-report-2026-09-23.md`（40,777 字节，gitignored）。
+> 编号 A–F 为本 fork 审查批次的项号；报告里「必须先修」那批已在前序批次修完，下列为**尚未修**的部分。
+
+| 项 | 位置 | 一句话 |
+|---|---|---|
+| A-2 · 中 | `overview-page.tsx:300` | 健康时间线文案写「10-minute buckets · last 24 hours」，但窗口右端实为所选区间末端（区间整体早于 now 时不等于「最近 24 小时」）→ 文案与窗口二者需对齐 |
+| A-3 · 低（**已裁决延后**） | `usage_service.go:201` + `lib/charts.ts:148` | 小时粒度在 span>31d 时静默降级为天桶，响应不回传生效粒度；前端仍按小时格式标注 → 用户已裁决「先不管」 |
+| A-4 · 低 | `summary_service.go:150-154` | 注释自相矛盾（「四项整体取自 perf_metrics」指代不清）；数字口径本身无错 |
+| B-1 · 中（加固项） | `service/observability/other.go:37` | retry chain 取 `admin_info` 的 `request_policy` 但本包不做可见性投影；实测 `root_info` 0 命中故当前不构成越权，风险是未来加字段即成越权出口 |
+| B-2 · 低（加固项） | `monitoring_service.go:176-177` | 同上，导出路径的 `out.Rows` 同样不投影 |
+| B-3 · 低 | `controller/observability/monitoring.go:53-56` | CSV 导出先 `c.Status(200)` 再写 body，中途失败会给客户端「200 + 半截 CSV」 |
+| B-4 · 低 | `web/src/features/observability/api.ts:110-121` | 下载链路把错误响应当文件保存（上游约定 HTTP 200 + `success:false`）→ 参数非法时下载到内容是 JSON 的 .csv |
+| C-4 · 低 | `requests-pagination.tsx:39-44` | 自建分页替代上游 `DataTablePagination`，能力缺口只写在代码注释里 |
+| D-2 · 低（已知取舍） | `summary_service.go:86-92`、`usage_service.go:190-198` | 区间内全量明细行 Go 侧扫描（实测 1.4 万行毫秒级），未做预聚合 —— 架构取舍非缺陷 |
+| D-3 · 低 | `usage_service.go:207-213` | `other` 列全量解析不受维度 Top 50 约束，同 D-2 取舍 |
+| D-4 · 低 | `usage_service.go:343` | 矩阵 `Limit(limit*limit)` 是单元格上限而非维度 Top-N；前端 `yMax=12` 截断并提示，使用上可接受 |
+| E-4 · 低 | `dto.go:21`、`query.go:163-179`、`lib/format.ts:43,50,63` | 死代码（全包 0 引用或仅测试引用） |
+| E-5 · 低 | `monitoring-page.tsx`（1007 行） | 违反 `web/AGENTS.md:114`「超约 200 行考虑拆分子组件/抽 Hooks」；建议抽 `RequestDetail` 与列定义 |
+| E-7 · 低 | `observability/README.md`「边界」节 | 边界声明过期（写「只新增文件、不修改现有页面」，但第 5 项侵入点改了 API 密钥页行为） |
+| F-9 · 低 | `plan/04-verification.md:74` | G8 记「7 语言各 +56 行」，与同文件 +55/+65 及实测 +64 key 口径不一（历史快照） |
+
+**未决口径 / 未验证项（需裁决或环境条件）**
+
+- **平均延迟分母口径**：`use_time>0` 的条件均值与顶部 `COUNT(*)` 总数口径不一致，同写法复制 5–6 处（`usage_service.go:140/171/238`、`monitoring_service.go:124/133`）→ 只报告未扩改，**待用户裁决**。
+- **PostgreSQL 未实测**：MySQL 保留字修复只验了 SQLite + MySQL，三库矩阵缺 PG 一环。
+- **GitHub Actions 打包路径未实跑**：打 tag 触发 `release.yml` 出产物（含 checksums）尚未验证（fork 为 public，额度免费）。
+- **孤儿 i18n 键待清理**：`{{calls}} calls · {{tokens}} tokens`、`From consumption logs`、`24h Activity Distribution`。
+- **`min(failure,total)` 边界风险**：`type=2` 行缺失而 `type=5` 正常时会少报失败（已记于上文口径说明）。
+- **生产 `failure_source` 待登录确认**：`/api/status` 不暴露该字段，需管理员凭证登录看板确认是否已翻为 `error_log`；免鉴权侧只能证到环境变量已生效。
