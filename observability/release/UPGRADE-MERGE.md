@@ -101,3 +101,85 @@ cd web && bun install && bun run typecheck && bun run lint && bun test
 
 - 代码：`git checkout <升级前 commit>` 即可（自有改动全在一条分支上，无历史改写）。
 - 生产：切回 `/opt/new-api/current/new-api.old`（部署脚本保留的上一版二进制），重启服务，约 3 秒。
+
+## 6. 本轮合并记录（upgrade1，2026-09-24）
+
+首次实执行「把 `upstream/main` 合进 `feat/observability`」。**merge，非 rebase**；无冲突；已推送前完成全量验证。
+
+### 6.1 合并参数（均为实跑输出）
+
+| 项 | 值 | 复算命令 |
+|---|---|---|
+| 合并前本 fork HEAD | `cf5582466b92a21d3a20a36d34f3de8f0b2bbccf` | `git rev-parse HEAD` |
+| 合并前 merge-base | `9310231b3c27fea933e939b46cf26e0ce67192e3` | `git merge-base upstream/main HEAD` |
+| 合并入的 `upstream/main` | `d04c118c8803f49e0c9bab74dcf5b5efeab9464a` | `git rev-parse upstream/main` |
+| 合并提交 | `f9c78c517236810011cff16c932e438f2e11dffe` | `git log -1 --format='%H %s'` |
+| 合并提交双亲 | `cf5582466` + `d04c118c8` | `git log -1 --format='%P'` |
+| 并入的上游提交数 | **7**（`git rev-list --count HEAD^1..HEAD` 输出 8，含合并提交本身） | 同左 |
+| 上游侧改动面 | **11 文件 / 7 提交** | `git diff --name-only 9310231b3 upstream/main \| wc -l` |
+| 冲突数 | **0**（`ort` 策略自动合并） | `git merge upstream/main --no-edit` |
+
+冲突面为 0 的原因不是巧合：合并前实测两侧改动文件**交集为空**——
+
+```bash
+comm -12 <(git diff --name-only 9310231b3 HEAD | sort) \
+         <(git diff --name-only 9310231b3 upstream/main | sort)   # 输出空
+```
+
+> 口径修正：本轮企划书写「我方 49 个改动文件」，实测该数（`git diff --name-only 9310231b3 HEAD | wc -l`）为 **71**；
+> 49 是**合并前最后一次提交** `cf5582466` 的文件数，非整条分支相对分叉点的文件数。交集为 0 的结论不受影响（71 ∩ 11 = 0）。
+
+### 6.2 门与全量验证（全绿）
+
+| 项 | 结果 | 备注 |
+|---|---|---|
+| `bash ~/.hermes/scripts/obs-gate.sh` | `GATE: ALL PASS`（G1–G8b） | G6 基线已自动前移至 `d04c118c8`，报「既有文件 **12** 个被改，全在白名单内」 |
+| `cd web && bun run test` | `Test Files 176 passed` / `Tests 2196 passed` | 全量前端 |
+| `go build ./...` | exit 0，无输出 | `GOPROXY=https://goproxy.cn,direct GOSUMDB=off` |
+| `go test ./service/observability/ ./controller/observability/ -count=1` | 两包均 `ok` | — |
+
+> **G6 的「12」与企划书的「10」不一致，已核为企划书笔误，非登记漂移**：合并前后该清单**逐行相同**（同一组 12 个既有文件），
+> 且与本文 §2 登记的「12 个既有文件（11 条侵入点 + 1 个并入第 5 项的测试文件）」一致。门白名单（6 条路径族）、
+> `sync-upstream.sh` 的 `TOUCHPOINTS`（5 条）本轮**均未改动**。无新增侵入点。
+
+### 6.3 diff 数字基线已前移到新 merge-base
+
+**diff 数字基线已随本轮合并由 `9310231b3` 前移到 `d04c118c8`，此前文档里的数字按旧基线计得。**
+下文给出新基线的复算值，供后续轮次比对：
+
+```bash
+BASE=$(git merge-base upstream/main HEAD)                      # = d04c118c8
+git diff --shortstat "$BASE" -- . ':(exclude)observability'    # 59 files changed, 9639 insertions(+), 12 deletions(-)
+git diff --name-status "$BASE" -- . ':(exclude)observability' | awk '{print $1}' | sort | uniq -c   # 47 A / 12 M
+```
+
+与旧基线（`9310231b3`，`70 files changed, 9926 insertions(+), 88 deletions(-)`，48 A / 22 M）的差额已复核为**恰为上游自身的改动**：
+`9639 + 287 = 9926`（上游本轮 11 文件合计 `+287`），文件数 `59 + 11 = 70`。两基线口径**不可互换**，旧文档数字不代表回退。
+
+### 6.4 反向核对（分叉已变小）
+
+```bash
+git diff --name-only upstream/main..cf5582466 | wc -l   # 合并前：82（本 fork 相对 upstream/main 的差异文件）
+git diff --name-only upstream/main..HEAD       | wc -l   # 合并后：71
+```
+
+差额恰为上表 11 个上游文件（`comm -23` 实测输出与上游 11 文件清单逐行一致，无我方文件丢失）。
+
+### 6.5 我方功能存活（逐条 grep）
+
+| 标记 | 命中 |
+|---|---|
+| `failureSourceNoteKey` | `web/src/features/observability/components/overview-page.tsx:95,145` |
+| `dimensionKeyAlias` | `service/observability/query.go:95,98`、`usage_service.go:172,261,296` |
+| `tokensJoin` | `service/observability/summary_service.go:174,177,194`、`usage_service.go:28` |
+| `COALESCE(NULLIF(MAX(tk.name)` | `service/observability/usage_service.go:32` |
+| `w-full table-fixed` | `web/src/features/observability/components/usage-page.tsx:482` |
+| `Failures counted since error logs were enabled` | 7 个语言包各 **1** 次 |
+| `api-keys-table.tsx` 第 5 项排序改动 | `:320-326` 限制注释 + `enableSorting` / `withSortedRowModel` |
+
+### 6.6 附带修正与纪律
+
+- 上游 `5401874c6` 把 CI 里 `-X` 的包路径由 `new-api/common.Version` 正为 `github.com/QuantumNous/new-api/common.Version`，
+  只动 `.github/workflows/`，**不影响本地打包命令**；本轮顺带并入。
+- 本轮**未** rebase、**未** force push、**未** `checkout --ours/--theirs`、**未**碰生产、**未**重建产物、**未**重启实例、
+  **未**修改上游既有文件逻辑（冲突数为 0，故无任何冲突解决改动）、**未**扩白名单。

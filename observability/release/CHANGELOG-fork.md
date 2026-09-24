@@ -354,3 +354,7 @@ $ shasum -a 256 new-api-linux-amd64
 - **`range=7d` 为自然日窗口**：`start=1789574400` = `2026-09-17 00:00:00 +08`（当日 00:00 前推 6 天），`end=1790153468` = 请求时刻。
 - 其余端点回归：`/summary?range=24h`、`/requests`、`/usage`、`/requests/export`（CSV）均 200；`/nonexistent` 仍 404（路由非兜底）。`data_source.failure_source = error_log`。
 - **独立性**：本项由独立验证 agent 复验 **VN1–VN5 全 PASS**（前端 175 文件 / 2171 用例、专项 10 / 77、Go 两包全绿、`GATE: ALL PASS`、i18n 2 新键 × 7 语言等量）。
+
+### 上游合并（2026-09-24，upgrade1）
+
+- 合并 `upstream/main` = `d04c118c8`（7 提交 / 11 文件）入 `feat/observability`，合并提交 `f9c78c517`，**冲突 0**；门 `GATE: ALL PASS`（G1–G8b）、前端 176 文件 / 2196 用例、Go 全量构建与我方两包全绿；diff 基线随之由 `9310231b3` 前移至 `d04c118c8`（新基线复算 59 文件 / +9639 −12，明细见 `UPGRADE-MERGE.md` §6）。**上文旧数字按旧基线计得，此处只加注、不改。**
