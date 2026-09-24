@@ -303,12 +303,22 @@ function KeysPage() {
   )
 }
 
-async function renderKeysPage(status = 1, overrides: Partial<ApiKey> = {}) {
+async function renderKeysPage(
+  status = 1,
+  overrides: Partial<ApiKey> = {},
+  additionalKeys: ApiKey[] = []
+) {
   let currentKey = { ...key, status, ...overrides }
   vi.mocked(api.get).mockImplementation(async (url) => {
     if (url.startsWith('/api/token/')) {
       return {
-        data: { success: true, data: { items: [currentKey], total: 1 } },
+        data: {
+          success: true,
+          data: {
+            items: [currentKey, ...additionalKeys],
+            total: 1 + additionalKeys.length,
+          },
+        },
       }
     }
     return { data: { success: true, data: { default: { ratio: 1 } } } }
@@ -366,6 +376,35 @@ it('combines creation and last use while keeping expiry, models and IP restricti
   })
   expect(quotaHeader).not.toHaveClass('pr-8')
   expect(quotaTrigger.closest('td')).not.toHaveClass('pr-8')
+})
+
+function namesInOrder() {
+  return Array.from(
+    document.querySelectorAll('tbody [data-column-id="name"]'),
+    (cell) => cell.textContent
+  )
+}
+
+it('sorts the loaded page by name from the header control without refetching the list', async () => {
+  const get = vi.mocked(api.get)
+  await renderKeysPage(1, { name: 'alpha' }, [
+    { ...key, id: 8, name: 'zeta' },
+    { ...key, id: 9, name: 'mike' },
+  ])
+  const user = userEvent.setup()
+  const nameHeader = screen.getByRole('columnheader', { name: 'Name' })
+
+  await user.click(within(nameHeader).getByRole('button'))
+  await user.click(screen.getByRole('menuitem', { name: 'Desc' }))
+  expect(namesInOrder()).toEqual(['zeta', 'mike', 'alpha'])
+
+  await user.click(within(nameHeader).getByRole('button'))
+  await user.click(screen.getByRole('menuitem', { name: 'Asc' }))
+  expect(namesInOrder()).toEqual(['alpha', 'mike', 'zeta'])
+
+  expect(get.mock.calls.every(([url]) => !String(url).includes('sort_by'))).toBe(
+    true
+  )
 })
 
 it('restores dates hidden by the old default and preserves unrelated column preferences', async () => {

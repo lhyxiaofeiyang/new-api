@@ -28,6 +28,7 @@ import { formatQuota } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import {
+  DEFAULT_USAGE_MATRIX,
   DEFAULT_USAGE_RANGE,
   DIMENSION_OPTIONS,
   GRANULARITY_OPTIONS,
@@ -45,12 +46,14 @@ import {
   indexMatrix,
 } from '../lib/matrix'
 import {
+  drillDownKey,
   isUsageMatrix,
   resolveTimeRange,
   toSelectOptions,
   toUsageParams,
 } from '../lib/query'
 import type {
+  FailureSource,
   ObservabilitySearch,
   UsageDimension,
   UsageGranularity,
@@ -78,7 +81,10 @@ export function UsagePage(props: UsagePageProps) {
   const granularity = props.search.granularity ?? 'day'
   const matrix = isUsageMatrix(props.search.matrix)
     ? props.search.matrix
-    : undefined
+    : DEFAULT_USAGE_MATRIX
+  // 点过维度下钻后，该维度值随 URL 记录下来；本页面行数据虽未随之收窄，
+  // 但已下钻的那一行仍要高亮，形成「点过这里」的反馈。
+  const selectedKey = drillDownKey(props.search)
 
   const params = toUsageParams(props.search)
   const { data, isLoading } = useObservabilityUsage(params)
@@ -167,6 +173,8 @@ export function UsagePage(props: UsagePageProps) {
             dimension={dimension}
             loading={isLoading}
             emptyMessage={t('No data available')}
+            failureSource={data?.data_source?.failure_source}
+            selectedKey={selectedKey}
             onRowClick={(row) => props.onDrillDown(dimension, row.key)}
           />
 
@@ -196,22 +204,23 @@ export function UsagePage(props: UsagePageProps) {
             height='h-72'
           />
 
-          <div className='grid gap-3 sm:gap-4 lg:grid-cols-2'>
-            <ChartPanel
-              title={t('Cost Composition')}
-              spec={buildCostCompositionSpec(rows, t)}
-              loading={isLoading}
-              empty={!isLoading && rows.length === 0}
-              emptyMessage={t('No data available')}
-              height='h-64'
-            />
-            <MatrixPanel
-              matrix={data?.matrix}
-              selected={matrix}
-              loading={isLoading}
-              onSelect={(next) => props.onSearchChange({ matrix: next })}
-            />
-          </div>
+          {/* 成本构成与用量矩阵各自独占整行：矩阵是多列热力表，半宽放不下全部
+              列（右侧被裁掉/只能横向滚动），必须拿到整行宽度才能自适应铺开。 */}
+          <ChartPanel
+            title={t('Cost Composition')}
+            spec={buildCostCompositionSpec(rows, t)}
+            loading={isLoading}
+            empty={!isLoading && rows.length === 0}
+            emptyMessage={t('No data available')}
+            height='h-64'
+          />
+
+          <MatrixPanel
+            matrix={data?.matrix}
+            selected={matrix}
+            loading={isLoading}
+            onSelect={(next) => props.onSearchChange({ matrix: next })}
+          />
         </div>
       </SectionPageLayout.Content>
     </SectionPageLayout>
@@ -223,6 +232,8 @@ interface DimensionTableProps {
   dimension: UsageDimension
   loading: boolean
   emptyMessage: string
+  failureSource?: FailureSource
+  selectedKey?: string
   onRowClick: (row: UsageRow) => void
 }
 
@@ -278,7 +289,11 @@ function DimensionTableBody(props: DimensionTableProps) {
             <Th>{t(dimensionLabel)}</Th>
             <Th align='right'>{t('Calls')}</Th>
             <Th align='right'>{t('Success')}</Th>
-            <Th align='right'>{t('Failed')}</Th>
+            <Th align='right'>
+              {props.failureSource === 'error_log'
+                ? t('Failed')
+                : `${t('Failed')} · ${t('Requires error logs')}`}
+            </Th>
             <Th align='right'>{t('Tokens')}</Th>
             <Th align='right'>{t('Cost')}</Th>
             <Th align='right'>{t('Average Latency')}</Th>
@@ -286,38 +301,52 @@ function DimensionTableBody(props: DimensionTableProps) {
           </tr>
         </thead>
         <tbody>
-          {props.rows.map((row) => (
-            <tr
-              key={row.key}
-              className='hover:bg-muted/40 cursor-pointer border-b transition-colors'
-              onClick={() => props.onRowClick(row)}
-            >
-              <td className='max-w-64 px-3 py-2'>
-                <span className='block truncate font-medium' title={row.label}>
-                  {row.label || row.key}
-                </span>
-              </td>
-              <Td>{formatTokenCount(row.calls)}</Td>
-              <Td>{formatTokenCount(row.success_calls)}</Td>
-              <Td>
-                {row.failure_calls > 0 ? (
-                  <span className='text-destructive'>
-                    {formatTokenCount(row.failure_calls)}
-                  </span>
-                ) : (
-                  <span className='text-muted-foreground'>-</span>
+          {props.rows.map((row) => {
+            const isSelected = row.key === props.selectedKey
+            return (
+              <tr
+                key={row.key}
+                data-state={isSelected ? 'selected' : undefined}
+                className={cn(
+                  // 与上游 TableRow 同款：hover 走 muted 混色，选中态走 bg-muted，
+                  // 并补一条左侧色条，让「已下钻」这一行在视觉上可辨。
+                  'group cursor-pointer border-b transition-colors',
+                  'hover:[background-color:color-mix(in_oklch,var(--muted)_50%,var(--background))]',
+                  'data-[state=selected]:bg-muted',
+                  isSelected && 'border-s-2 border-s-primary'
                 )}
-              </Td>
-              <Td
-                title={`${formatTokenCount(row.prompt_tokens)} / ${formatTokenCount(row.completion_tokens)} / ${formatTokenCount(row.cached_tokens)}`}
+                onClick={() => props.onRowClick(row)}
               >
-                {formatTokenCount(row.total_tokens)}
-              </Td>
-              <Td>{formatQuota(row.quota)}</Td>
-              <Td>{formatLatencyMs(row.average_latency_ms)}</Td>
-              <Td>{formatShare(row.share)}</Td>
-            </tr>
-          ))}
+                <td className='max-w-64 px-3 py-2'>
+                  <span
+                    className='block truncate font-medium'
+                    title={row.label}
+                  >
+                    {row.label || row.key}
+                  </span>
+                </td>
+                <Td>{formatTokenCount(row.calls)}</Td>
+                <Td>{formatTokenCount(row.success_calls)}</Td>
+                <Td>
+                  {row.failure_calls > 0 ? (
+                    <span className='text-destructive'>
+                      {formatTokenCount(row.failure_calls)}
+                    </span>
+                  ) : (
+                    <span className='text-muted-foreground'>-</span>
+                  )}
+                </Td>
+                <Td
+                  title={`${formatTokenCount(row.prompt_tokens)} / ${formatTokenCount(row.completion_tokens)} / ${formatTokenCount(row.cached_tokens)}`}
+                >
+                  {formatTokenCount(row.total_tokens)}
+                </Td>
+                <Td>{formatQuota(row.quota)}</Td>
+                <Td>{formatLatencyMs(row.average_latency_ms)}</Td>
+                <Td>{formatShare(row.share)}</Td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>
@@ -447,18 +476,20 @@ function MatrixGrid(props: {
   const overflow = yLabels.length - yMax
 
   return (
+    // 面板独占整行后，表格用 w-full + table-fixed 把可用宽度均分给各列，
+    // 因此 ≥lg 时通常无需横向滚动；窄屏仍保留 overflow-x-auto 兜底。
     <div className='overflow-x-auto'>
-      <table className='border-separate border-spacing-0.5 text-xs'>
+      <table className='w-full table-fixed border-separate border-spacing-0.5 text-xs'>
         <caption className='text-muted-foreground sr-only'>
           {props.label}
         </caption>
         <thead>
           <tr>
-            <th className='sticky left-0' />
+            <th className='bg-card sticky left-0 w-28' />
             {xLabels.map((label) => (
               <th
                 key={label}
-                className='text-muted-foreground max-w-20 truncate px-1.5 pb-1 text-left text-[11px] font-medium'
+                className='text-muted-foreground min-w-20 truncate px-1.5 pb-1 text-center text-[11px] font-medium'
                 title={label}
               >
                 {label}
@@ -470,7 +501,7 @@ function MatrixGrid(props: {
           {yLabels.slice(0, yMax).map((yLabel, y) => (
             <tr key={yLabel}>
               <th
-                className='text-muted-foreground bg-card sticky left-0 max-w-28 truncate px-1.5 pr-2 text-right text-[11px] font-medium'
+                className='text-muted-foreground bg-card sticky left-0 w-28 truncate px-1.5 pr-2 text-right text-[11px] font-medium'
                 title={yLabel}
               >
                 {yLabel}
@@ -482,7 +513,7 @@ function MatrixGrid(props: {
                   <td
                     key={xLabel}
                     className={cn(
-                      'h-7 min-w-9 rounded-sm text-center align-middle font-mono text-[10px] tabular-nums',
+                      'h-7 rounded-sm text-center align-middle font-mono text-[10px] tabular-nums',
                       getHeatClass(value, index.max)
                     )}
                     title={`${xLabel} × ${yLabel}: ${formatMatrixCellValue(value, MATRIX_CELL_METRIC)} ${t('Calls')}`}

@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import z from 'zod'
 
+import { DEFAULT_USAGE_MATRIX } from '../constants'
 import type { ObservabilitySearch } from '../types'
 
 const RANGE_VALUES = ['today', '24h', '7d', '30d', 'custom'] as const
@@ -64,7 +65,13 @@ export const observabilitySearchSchema = z.object({
 
   dimension: z.enum(DIMENSION_VALUES).optional().catch(undefined),
   granularity: z.enum(GRANULARITY_VALUES).optional().catch(undefined),
-  matrix: z.enum(MATRIX_VALUES).optional().catch(undefined),
+  // Not optional: the matrix panel always displays one pairing, so the default
+  // belongs in the URL from the very first render. An invalid value falls back
+  // to the default rather than dropping the key, which would blank the panel.
+  matrix: z
+    .enum(MATRIX_VALUES)
+    .default(DEFAULT_USAGE_MATRIX)
+    .catch(DEFAULT_USAGE_MATRIX),
 })
 
 export type ObservabilityRouteSearch = z.infer<typeof observabilitySearchSchema>

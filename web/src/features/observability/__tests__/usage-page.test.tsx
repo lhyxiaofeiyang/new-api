@@ -102,6 +102,91 @@ test('renders the heat matrix cells the endpoint returns', async () => {
   expect(screen.getByText('dev-key')).toBeVisible()
 })
 
+test('marks the drilled-down row as selected from the URL', async () => {
+  mockUsage(USAGE_RESPONSE)
+  // token id 7 is `prod-key` in the fixture; the URL records the drill-down.
+  await renderUsage({ search: { tokenId: 7 } })
+
+  await screen.findAllByText('prod-key')
+  const selected = document.querySelectorAll('tr[data-state="selected"]')
+  expect(selected).toHaveLength(1)
+  expect(selected[0]).toHaveTextContent('prod-key')
+})
+
+test('leaves rows unselected when no drill-down is recorded', async () => {
+  mockUsage(USAGE_RESPONSE)
+  await renderUsage()
+
+  await screen.findAllByText('prod-key')
+  expect(document.querySelectorAll('tr[data-state="selected"]')).toHaveLength(0)
+})
+
+test('requests the default matrix on first load, before any filter is touched', async () => {
+  const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === '/api/observability/usage') {
+      return { data: { success: true, data: USAGE_RESPONSE } }
+    }
+    return { data: { success: true, data: {} } }
+  })
+
+  // First entry: the URL carries no filters at all, so the page has to supply
+  // the matrix itself. Without it the endpoint omits `matrix` and the panel
+  // stays empty until the user happens to touch a dropdown.
+  await renderUsage()
+
+  const usageCall = get.mock.calls.find(
+    ([url]) => url === '/api/observability/usage'
+  )
+  const params = usageCall?.[1]?.params as Record<string, unknown>
+  expect(params.matrix).toBe('token_model')
+})
+
+test('stretches the matrix across a full row instead of sharing it with the cost chart', async () => {
+  mockUsage(USAGE_RESPONSE)
+  await renderUsage()
+
+  // B 项：矩阵与成本构成图此前被 lg:grid-cols-2 塞进两列，矩阵只拿到半宽，
+  // 右侧列被裁掉。修法是各自独占整行，两列栅格必须消失。
+  const matrix = await screen.findByText('Usage Matrix')
+  const chart = screen.getByText('Cost Composition')
+  expect(matrix.closest('.lg\\:grid-cols-2')).toBeNull()
+  expect(chart.closest('.lg\\:grid-cols-2')).toBeNull()
+  // 两者不再是同一栅格容器里的兄弟（原先同处一个 grid 容器）。
+  const chartRow = chart.closest('div')
+  expect(chartRow?.contains(matrix)).toBe(false)
+
+  // 表格必须撑满可用宽度，让列均分铺开（而非按内容宽收缩）。
+  // 页面上还有维度表，故从矩阵面板根节点内取表，不能直接 querySelector('table')。
+  const panel = matrix.parentElement?.parentElement
+  const table = panel?.querySelector('table')
+  expect(table).toHaveClass('w-full', 'table-fixed')
+})
+
+test('marks the failed column as needing error logs when the failure source is not error logs', async () => {
+  mockUsage({
+    ...USAGE_RESPONSE,
+    data_source: {
+      error_log_enabled: false,
+      failure_source: 'perf_metrics',
+      log_rows: 12_480,
+    },
+  })
+  await renderUsage()
+
+  expect(
+    screen.getByRole('columnheader', { name: /Requires error logs/ })
+  ).toBeVisible()
+})
+
+test('leaves the failed column unmarked when the failure source is error logs', async () => {
+  mockUsage(USAGE_RESPONSE)
+  await renderUsage()
+
+  expect(
+    screen.queryByRole('columnheader', { name: /Requires error logs/ })
+  ).not.toBeInTheDocument()
+})
+
 test('shows the empty state rather than a zeroed table when there is no usage', async () => {
   mockUsage({
     rows: [],

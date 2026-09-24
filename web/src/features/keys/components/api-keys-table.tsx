@@ -317,6 +317,13 @@ export function ApiKeysTable() {
     onGlobalFilterChange,
     onColumnFiltersChange,
     manualPagination: true,
+    // The keys API has no sort parameters and returns one server-side page at a
+    // time, so these header sort buttons order only the rows already loaded for
+    // the current page. This is not a whole-dataset sort: a key kept on another
+    // page will not move into view, and ascending/descending is only meaningful
+    // within the page size the server returned.
+    enableSorting: true,
+    withSortedRowModel: true,
     totalCount: data?.total || 0,
     ensurePageInRange,
   })

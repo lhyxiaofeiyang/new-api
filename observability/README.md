@@ -32,7 +32,14 @@ observability/
 
 ## 边界（不可越线）
 
-- 只**新增**文件，加极少数注册点（后端路由注册、前端导航注册、i18n 追加 key）。
-- **不修改**现有页面、现有 API 行为、数据库 schema。
+- 只**新增**文件，加极少数已登记侵入点。**侵入点有两个计数口径，不要混用**：
+  - **回放口径 = 5 条路径**：`scripts/sync-upstream.sh` 的 `TOUCHPOINTS` 收录 5 条「合并后必须重新落回」的路径
+    （`router/api-router.go`、`web/src/hooks/use-sidebar-data.ts`、`web/src/i18n/locales`、`web/src/features/keys/components/api-keys-table.tsx`、
+    `web/src/features/keys/components/__tests__/api-key-listing.test.tsx`）。其中 i18n 是**目录**、keys 是**两个文件**，故「5 条路径」不等于文件数。
+  - **文件口径 = 12 个既有文件**：`git diff --name-status "$(git merge-base upstream/main HEAD)" -- . ':(exclude)observability'` 实测修改了
+    12 个上游既有文件 = 1 路由 + 1 侧边栏 + 7 个语言包 + `features/keys` 的 2 个 + **生成物 `web/src/routeTree.gen.ts`**
+    （由 `web/rsbuild.config.ts` 的 `@tanstack/router-plugin` 在构建期自动重生成，**不手改**）。
+    逐条登记见 `release/UPGRADE-MERGE.md` 第 2 节（**11 条** = 10 个手改 + 1 个生成物；keys 的测试文件并入第 5 项，不单列）。
+- **不修改**现有页面（上述已登记侵入点除外）、现有 API 行为、数据库 schema。
 - 数据访问一律**只读**；不写入上游任何表。
 - 查询必须同时兼容 SQLite / MySQL / PostgreSQL（上游 AGENTS.md 硬约束）。

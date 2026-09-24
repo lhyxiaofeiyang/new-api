@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import type { ColumnDef } from '@tanstack/react-table'
-import { Download, RefreshCw } from 'lucide-react'
+import { Download, KeyRound, RefreshCw } from 'lucide-react'
 import { Fragment, useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -30,6 +30,7 @@ import {
   TruncatedCell,
   useDataTable,
 } from '@/components/data-table'
+import { GroupBadge } from '@/components/group-badge'
 import { SectionPageLayout } from '@/components/layout'
 import { StatusBadge } from '@/components/status-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -47,6 +48,12 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { TableCell, TableRow } from '@/components/ui/table'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { getChannels } from '@/features/channels/api'
 import { CHANNEL_TYPES } from '@/features/channels/constants'
 import { searchApiKeys } from '@/features/keys/api'
@@ -242,17 +249,88 @@ function UserCell(props: { item: ObservabilityRequestItem }) {
   )
 }
 
-/** 与「使用日志」保持一致：渠道用按 id 取色的 pill 呈现。 */
+/**
+ * 与「使用日志」的渠道列保持一致：pill 里是 #id（按 id 取色、可复制、mono），
+ * 渠道名在下方一行，渠道类型放进 tooltip（上游该列不放类型，故不占正文位）。
+ */
 function ChannelCell(props: { item: ObservabilityRequestItem }) {
+  const { t } = useTranslation()
   const { channel_id: channelId, channel_name: channelName } = props.item
+  const channelIdDisplay = `#${channelId}`
   return (
-    <StatusBadge
-      label={channelName || `#${channelId}`}
-      autoColor={String(channelId)}
-      copyText={String(channelId)}
-      showDot={false}
-      size='sm'
-    />
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger
+          render={<div className='flex max-w-[160px] flex-col gap-0.5' />}
+        >
+          <div className='flex min-w-0 items-center gap-1'>
+            <StatusBadge
+              label={channelIdDisplay}
+              autoColor={String(channelId)}
+              copyText={String(channelId)}
+              size='sm'
+              showDot={false}
+              className='font-mono'
+            />
+          </div>
+          {channelName && (
+            <span className='text-muted-foreground/70 truncate [font-family:var(--font-body)] !text-xs'>
+              {channelName}
+            </span>
+          )}
+        </TooltipTrigger>
+        <TooltipContent>
+          <div className='space-y-1'>
+            <p>
+              {channelName
+                ? `${channelName} ${channelIdDisplay}`
+                : channelIdDisplay}
+            </p>
+            <p className='text-muted-foreground text-xs'>
+              {t('Channel Type')}:{' '}
+              {getChannelTypeLabel(props.item.channel_type, t)}
+            </p>
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
+/**
+ * 与「使用日志」的令牌列保持一致：带 KeyRound 图标的 pill，组名在下方。
+ *
+ * 与「模型」列同一取舍：**pill 本体可复制**（`copyable`），点击时 StatusBadge
+ * 会 stopPropagation，代价是点 pill 不触发行展开；点行内其它位置仍可展开。
+ * 原先的「pill 不可复制 + 独立 CopyButton」方案已废弃——用户反馈那个常显的
+ * 复制图标是多余的视觉噪音，模型列的做法才是本项目的既有约定。
+ */
+function TokenCell(props: { item: ObservabilityRequestItem }) {
+  const name = props.item.token_name
+  if (!name) {
+    return <span className='text-muted-foreground'>-</span>
+  }
+  return (
+    <div className='flex max-w-[200px] min-w-0 flex-col gap-0.5'>
+      <StatusBadge
+        label={name}
+        icon={KeyRound}
+        size='sm'
+        showDot={false}
+        copyText={name}
+        className='border-border/60 bg-muted/30 text-foreground h-6 max-w-full gap-1.5 overflow-hidden rounded-md border px-2 py-0.5 [font-family:var(--font-body)]'
+      />
+      {props.item.group && (
+        <span className='block max-w-full truncate text-xs leading-none'>
+          <GroupBadge
+            group={props.item.group}
+            type='text'
+            size='sm'
+            className='inline align-baseline text-xs leading-none [&>span]:leading-none'
+          />
+        </span>
+      )}
+    </div>
   )
 }
 
@@ -425,21 +503,12 @@ export function MonitoringPage(props: MonitoringPageProps) {
         id: 'token_name',
         accessorKey: 'token_name',
         header: t('API Key'),
-        cell: ({ row }) => (
-          <TruncatedCell>{row.original.token_name || '-'}</TruncatedCell>
-        ),
+        cell: ({ row }) => <TokenCell item={row.original} />,
       },
       {
         id: 'channel',
         header: t('Channel'),
-        cell: ({ row }) => (
-          <div className='flex min-w-0 flex-col items-start gap-1'>
-            <ChannelCell item={row.original} />
-            <span className='text-muted-foreground text-xs'>
-              {getChannelTypeLabel(row.original.channel_type, t)}
-            </span>
-          </div>
-        ),
+        cell: ({ row }) => <ChannelCell item={row.original} />,
       },
       {
         id: 'model_name',
@@ -453,19 +522,11 @@ export function MonitoringPage(props: MonitoringPageProps) {
       },
       {
         id: 'tokens',
-        header: () => (
-          <span title={t('Prompt / Completion / Cached / Total')}>
-            {t('Tokens')}
-          </span>
-        ),
+        // 只展示总量；输入/输出/缓存三个维度保留在展开明细里。
+        header: t('Total Tokens'),
         cell: ({ row }) => (
           <span className='font-mono text-xs tabular-nums'>
-            {formatTokens(row.original.prompt_tokens)} /{' '}
-            {formatTokens(row.original.completion_tokens)} /{' '}
-            {formatTokens(row.original.cached_tokens)} /{' '}
-            <span className='font-semibold'>
-              {formatTokens(row.original.total_tokens)}
-            </span>
+            {formatTokens(row.original.total_tokens)}
           </span>
         ),
       },
@@ -513,7 +574,11 @@ export function MonitoringPage(props: MonitoringPageProps) {
       },
       {
         id: 'status',
-        header: t('Status'),
+        // 关闭错误日志时该列恒为 '-'，就地标注原因，避免用户以为是数据缺失。
+        header:
+          errorLogEnabled === false
+            ? `${t('Status')} · ${t('Requires error logs')}`
+            : t('Status'),
         cell: ({ row }) => renderStatus(row.original, errorLogEnabled, t),
       },
     ],
@@ -543,10 +608,20 @@ export function MonitoringPage(props: MonitoringPageProps) {
     async (format: 'csv' | 'json') => {
       setExporting(true)
       try {
-        const blob = await downloadObservabilityRequests(
+        const download = await downloadObservabilityRequests(
           { ...params, page: undefined, page_size: undefined },
           format
         )
+        // 后端有行数上限：被截断时明确告知，别让用户以为导出了全部结果。
+        if (download.truncated) {
+          toast.warning(
+            t('Export truncated to {{exported}} of {{total}} rows', {
+              exported: download.exported,
+              total: download.total,
+            })
+          )
+        }
+        const blob = download.blob
         const url = URL.createObjectURL(blob)
         const link = document.createElement('a')
         const stamp = new Date().toISOString().replaceAll(/[:.]/g, '-')
@@ -780,7 +855,10 @@ export function MonitoringPage(props: MonitoringPageProps) {
                     htmlFor='observability-only-failed'
                     className='text-xs font-normal'
                   >
-                    {t('Failed Only')}
+                    {/* 关闭错误日志时「只看失败」无数据可筛，就地标注原因。 */}
+                    {errorLogEnabled === false
+                      ? `${t('Failed Only')} · ${t('Requires error logs')}`
+                      : t('Failed Only')}
                   </Label>
                 </div>
                 <div className='flex items-center gap-2'>

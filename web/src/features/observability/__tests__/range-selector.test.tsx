@@ -17,31 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { cleanup, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, expect, test, vi } from 'vitest'
 
 import { RangeSelector } from '../components/range-selector'
 
 afterEach(cleanup)
 
-test('labels the range control so it can be reached by name', () => {
-  render(<RangeSelector range='24h' onRangeChange={() => {}} />)
-
-  expect(screen.getByLabelText('Time Range')).toBeVisible()
-})
-
-test('only renders the custom bounds picker for the custom range', () => {
-  const { unmount } = render(
-    <RangeSelector range='24h' onRangeChange={() => {}} />
-  )
-  expect(screen.queryByRole('button', { name: 'Date Range' })).toBeNull()
-  unmount()
-
-  render(<RangeSelector range='custom' onRangeChange={() => {}} />)
-  // The upstream picker labels its own trigger until bounds are chosen.
-  expect(screen.getByRole('button', { name: 'Date Range' })).toBeVisible()
-})
-
-test('converts the raw unix bounds it is given back into seconds', () => {
+test('translates the unix bounds it is given into a local label', async () => {
   const onRangeChange = vi.fn()
   render(
     <RangeSelector
@@ -52,16 +35,31 @@ test('converts the raw unix bounds it is given back into seconds', () => {
     />
   )
 
-  // Rendering the picker must not emit a change; the callback only fires on
-  // an actual user edit, so the URL keeps the range the user chose.
+  // 渲染既有的自定义区间不得回调：回调只在用户真正编辑时触发，
+  // 否则 URL 里的区间会被重新写回。
   expect(onRangeChange).not.toHaveBeenCalled()
+
+  // 触发器要把秒级 unix 时间戳渲染成本地时间标签，证明 start/end 确实被用上。
+  const expectedStart = new Date(1_758_480_000 * 1000)
+  const expectedEnd = new Date(1_758_566_400 * 1000)
+  expect(
+    screen.getByRole('button', {
+      name: new RegExp(
+        `${expectedStart.getFullYear()}-\\d{2}-\\d{2} \\d{2}:\\d{2}.*` +
+          `${expectedEnd.getFullYear()}-\\d{2}-\\d{2} \\d{2}:\\d{2}`
+      ),
+    })
+  ).toBeVisible()
 })
 
-test('reports a preset change without inventing bounds', () => {
+test('reports the preset the user picked', async () => {
   const onRangeChange = vi.fn()
+  const user = userEvent.setup()
   render(<RangeSelector range='24h' onRangeChange={onRangeChange} />)
 
-  // The select is a custom control; driving it through the DOM is covered by
-  // the upstream component. Here we only assert the callback contract.
-  expect(onRangeChange).not.toHaveBeenCalled()
+  await user.click(screen.getByLabelText('Time Range'))
+  await user.click(await screen.findByRole('option', { name: 'Last 7 Days' }))
+
+  expect(onRangeChange).toHaveBeenCalledWith('7d')
 })
+

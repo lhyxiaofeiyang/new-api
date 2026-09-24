@@ -92,6 +92,16 @@ func logGroupColumn() string {
 	return "`group`"
 }
 
+// dimensionKeyAlias 返回维度键的列别名。key 是 MySQL 保留字，未加引号的
+// `AS key` 会让聚合 SQL 直接报 1064（实测 MySQL 8.4），必须与 group 列一样
+// 按方言加引号；PostgreSQL 用双引号，MySQL/SQLite 用反引号。
+func dimensionKeyAlias() string {
+	if common.UsingLogDatabase(common.DatabaseTypePostgreSQL) {
+		return `"key"`
+	}
+	return "`key`"
+}
+
 // likeContains 转义 LIKE 元字符后构造包含匹配模式，配合 ESCAPE '!' 使用。
 func likeContains(value string) string {
 	escaped := strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(value)
@@ -158,24 +168,6 @@ func applyFilters(q *gorm.DB, f Filters) *gorm.DB {
 		q = q.Where("(logs.token_name LIKE ? ESCAPE '!' OR logs.model_name LIKE ? ESCAPE '!')", pattern, pattern)
 	}
 	return q
-}
-
-// keyString 把不同驱动返回的分组键（数值或字节串）统一成字符串。
-func keyString(value any) string {
-	switch v := value.(type) {
-	case nil:
-		return ""
-	case string:
-		return v
-	case []byte:
-		return string(v)
-	case int64:
-		return fmt.Sprintf("%d", v)
-	case float64:
-		return fmt.Sprintf("%d", int64(v))
-	default:
-		return fmt.Sprintf("%v", v)
-	}
 }
 
 // bucketStart 把 unix 秒对齐到 epoch 对齐的桶起点。

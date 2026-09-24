@@ -26,7 +26,7 @@ import type {
   ObservabilityRequestsParams,
   ObservabilityUsageParams,
 } from '../api'
-import { USAGE_DIMENSION_LIMIT } from '../constants'
+import { DEFAULT_USAGE_MATRIX, USAGE_DIMENSION_LIMIT } from '../constants'
 import type {
   ObservabilityRange,
   ObservabilitySearch,
@@ -90,7 +90,9 @@ export function toUsageParams(
     ...base,
     dimension: search.dimension ?? DEFAULT_DIMENSION,
     granularity: search.granularity ?? DEFAULT_GRANULARITY,
-    matrix: search.matrix,
+    // The panel always shows a pairing, so a missing selection still requests
+    // the default matrix instead of leaving the endpoint's matrix out.
+    matrix: isUsageMatrix(search.matrix) ? search.matrix : DEFAULT_USAGE_MATRIX,
     limit: USAGE_DIMENSION_LIMIT,
   }
 }
@@ -157,4 +159,17 @@ export function buildDrillDownSearch(
     default:
       return {}
   }
+}
+
+/**
+ * The row a drill-down last selected, read back from the same URL keys
+ * `buildDrillDownSearch` writes. Returns the raw dimension key so the usage
+ * table can highlight the clicked row without keeping component state that
+ * would desync from the URL.
+ */
+export function drillDownKey(search: ObservabilitySearch): string | undefined {
+  if (search.tokenId !== undefined) return String(search.tokenId)
+  if (search.channelId !== undefined) return String(search.channelId)
+  if (search.channelType !== undefined) return String(search.channelType)
+  return search.model ?? search.group
 }

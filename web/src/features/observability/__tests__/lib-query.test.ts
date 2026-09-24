@@ -25,6 +25,7 @@ import {
   buildDrillDownSearch,
   DEFAULT_REQUEST_SORT,
   DEFAULT_SORT_ORDER,
+  drillDownKey,
   formatBucketLabel,
   isUsageMatrix,
   resolveTimeRange,
@@ -124,11 +125,37 @@ describe('observability usage params', () => {
     assert.equal(params.limit, USAGE_DIMENSION_LIMIT)
   })
 
+  test('always sends a matrix, even before any filter is set', () => {
+    // The panel always shows a pairing; a missing matrix would blank it.
+    assert.equal(toUsageParams({}).matrix, 'token_model')
+    assert.equal(toUsageParams({ matrix: undefined }).matrix, 'token_model')
+  })
+
   test('passes an explicit matrix selector through', () => {
     assert.equal(
       toUsageParams({ matrix: 'channel_model' }).matrix,
       'channel_model'
     )
+  })
+})
+
+describe('observability drill-down selection', () => {
+  test('reads the clicked key back from the same url keys it writes', () => {
+    assert.equal(drillDownKey({ tokenId: 7 }), '7')
+    assert.equal(drillDownKey({ channelId: 3 }), '3')
+    assert.equal(drillDownKey({ channelType: 1 }), '1')
+    assert.equal(drillDownKey({ model: 'gpt-4o' }), 'gpt-4o')
+    assert.equal(drillDownKey({ group: 'default' }), 'default')
+  })
+
+  test('round-trips a token drill-down through the url', () => {
+    const patch = buildDrillDownSearch('token', '7')
+    assert.equal(drillDownKey(patch), '7')
+  })
+
+  test('reports no selection when the url records no drill-down', () => {
+    assert.equal(drillDownKey({}), undefined)
+    assert.equal(drillDownKey({ range: '7d' }), undefined)
   })
 })
 

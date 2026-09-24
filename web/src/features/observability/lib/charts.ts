@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { dataScheme as vchartDataScheme } from '@visactor/vchart/esm/theme/color-scheme/builtin/default'
 import type { TFunction } from 'i18next'
 
 import dayjs from '@/lib/dayjs'
@@ -41,12 +42,23 @@ export interface VChartSpec {
 }
 
 /**
- * VChart draws to a <canvas>, which cannot resolve CSS `var(--chart-*)`
- * references — passing them left the series on VChart's fallback colours and
- * made these charts look unlike every other chart in the app. The rest of the
- * dashboard (flow/model/user charts, rankings, pricing) simply lets VChart's own
- * `light`/`dark` palette apply via the `theme` prop, so do the same here.
+ * Concrete palette for charts whose colours must be assigned per-series rather
+ * than left to VChart's ordinal default. VChart draws to a <canvas>, so CSS
+ * `var(--chart-*)` references never resolve there; instead this reads the same
+ * built-in `dataScheme` the dashboard's `getDashboardChartColors` uses, picking
+ * the first scheme whose domain capacity covers the series count. The light and
+ * dark themes share one `dataScheme`, so a single call serves both.
  */
+export function getObservabilityChartColors(count: number): string[] {
+  const scheme =
+    vchartDataScheme.find(
+      (item) => !item.maxDomainLength || count <= item.maxDomainLength
+    ) ?? vchartDataScheme.at(-1)
+  if (!scheme) return []
+  return scheme.scheme.filter(
+    (color): color is string => typeof color === 'string'
+  )
+}
 
 /** Stacked series need the metric folded into the row as a series field. */
 function toSeriesValues(
@@ -121,7 +133,7 @@ export function buildHourlyActivitySpec(
     legends: { visible: false },
     title: {
       visible: true,
-      text: t('24h Activity Distribution'),
+      text: t('Hourly distribution (hour of day)'),
       subtext: values.length === 0 ? t('No data available') : undefined,
     },
   }
@@ -192,6 +204,13 @@ export function buildCostCompositionSpec(
       { orient: 'left', type: 'linear' },
     ],
     legends: { visible: false },
+    // One distinct colour per dimension bucket, assigned explicitly: without a
+    // series field VChart paints every bar from the first palette slot, which
+    // is what made the panel look monochrome.
+    color: {
+      type: 'ordinal',
+      range: getObservabilityChartColors(Math.max(values.length, 1)),
+    },
     title: {
       visible: true,
       text: t('Cost Composition'),

@@ -115,6 +115,35 @@ func TestGetUsageTrendBuckets(t *testing.T) {
 	assert.Equal(t, int64(3), total)
 }
 
+// 用量分析页的 token 维度必须与仪表盘 Top 排行同口径：名字取 tokens 表的当前名，
+// 同一 token 改名后不得因历史名拆成多行，tokens 表查不到时才回退历史名。
+// 夹具 setupTopTokenFixture 里 token 4 有两批不同 token_name（改名前后各一条）
+// 且 tokens 表给出当前名，token 9 在日志里有名字但 tokens 表没有对应行。
+func TestGetUsageTokenLabelUsesCurrentName(t *testing.T) {
+	_, now := setupTopTokenFixture(t)
+	withErrorLog(t, true)
+
+	usage, err := GetUsage(Range7d, 0, 0, "token", "", "day", 0, now)
+	require.NoError(t, err)
+
+	byKey := map[string]UsageRow{}
+	for _, row := range usage.Rows {
+		byKey[row.Key] = row
+	}
+	require.Len(t, byKey, 2, "同一 token_id 改名后只能聚合出一行")
+
+	// ① tokens 表有当前名：显示当前名而非任一历史名。
+	current := byKey["4"]
+	assert.Equal(t, "mac | Hermes | OpenAI", current.Label)
+	assert.Equal(t, int64(2), current.Calls, "改名前后两批日志必须合并计数")
+	assert.Equal(t, int64(3000), current.TotalTokens)
+
+	// ② tokens 表查不到该 id：回退到日志里的历史名，不得留空。
+	fallback := byKey["9"]
+	assert.Equal(t, "bulk-key", fallback.Label)
+	assert.Equal(t, int64(3), fallback.Calls)
+}
+
 func TestGetUsageMatrix(t *testing.T) {
 	_, now := setupFixture(t)
 	withErrorLog(t, false)

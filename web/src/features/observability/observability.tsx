@@ -117,7 +117,9 @@ export function Observability() {
   if (!isAdmin) {
     return (
       <SectionPageLayout>
-        <SectionPageLayout.Title>{t('Observability')}</SectionPageLayout.Title>
+        <SectionPageLayout.Title>
+          {t('Token Monitoring')}
+        </SectionPageLayout.Title>
         <SectionPageLayout.Content>
           <div className='bg-card text-muted-foreground flex h-40 items-center justify-center rounded-2xl border text-sm'>
             {t('You do not have permission to view this page.')}

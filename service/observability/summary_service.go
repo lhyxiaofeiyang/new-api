@@ -12,8 +12,9 @@ import (
 )
 
 // summaryTotalsSelect 只使用 COUNT/SUM 与 CASE WHEN，三库通用。
+// 不在此处派生 success_calls：成功数必须由「总数 − 失败数」反推，
+// 而失败数依赖错误日志开关（见 GetSummary），无法在单条 SQL 内决定。
 const summaryTotalsSelect = `COUNT(*) AS calls,
-	COALESCE(SUM(CASE WHEN use_time > 0 THEN 1 ELSE 0 END), 0) AS success_calls,
 	COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
 	COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
 	COALESCE(SUM(quota), 0) AS quota,
@@ -27,7 +28,6 @@ const summaryUniqueSelect = `COUNT(DISTINCT CASE WHEN token_id > 0 THEN token_id
 
 type summaryTotalsRow struct {
 	Calls            int64 `gorm:"column:calls"`
-	SuccessCalls     int64 `gorm:"column:success_calls"`
 	PromptTokens     int64 `gorm:"column:prompt_tokens"`
 	CompletionTokens int64 `gorm:"column:completion_tokens"`
 	Quota            int64 `gorm:"column:quota"`
@@ -94,12 +94,19 @@ func GetSummary(rangeName string, startRaw, endRaw int64, now time.Time) (*Summa
 	ttftSum, ttftCount := sumTtftMs(details)
 	cachedTokens := sumCachedTokens(details)
 	failureCalls, failureSource := getFailureStats(r)
+	if failureSource == failureSourcePerfMetrics {
+		failureCalls = perfMetricsFailureEstimate(r)
+	}
+	// 失败数不得超过总数，否则 成功 = 总数 − 失败 与「三项加得平」无法同时成立。
+	// 两种来源都可能超额：开启时重试会为同一次请求写出多条 type=5；
+	// 关闭时 perf_metrics 的桶覆盖窗口与 logs 的行范围不一致（实测逐日覆盖率
+	// 113%→28.8%）。截断后成功数下限 0，三项恒加得平。
+	failureCalls = min(failureCalls, totals.Calls)
 
 	counters := SummaryCounters{
 		TotalCalls:       totals.Calls,
-		SuccessCalls:     totals.SuccessCalls,
 		FailureCalls:     failureCalls,
-		SuccessRate:      successRate(totals.SuccessCalls, totals.Calls),
+		SuccessCalls:     max(totals.Calls-failureCalls, 0),
 		PromptTokens:     totals.PromptTokens,
 		CompletionTokens: totals.CompletionTokens,
 		CachedTokens:     cachedTokens,
@@ -113,9 +120,7 @@ func GetSummary(rangeName string, startRaw, endRaw int64, now time.Time) (*Summa
 		UniqueChannels:   uniques.UniqueChannels,
 		UniqueModels:     uniques.UniqueModels,
 	}
-	if failureSource == failureSourcePerfMetrics {
-		counters = perfMetricsCounters(r, counters)
-	}
+	counters.SuccessRate = successRate(counters.SuccessCalls, counters.TotalCalls)
 
 	out.Summary = counters
 	out.DataSource = DataSource{
@@ -134,7 +139,8 @@ func GetSummary(rangeName string, startRaw, endRaw int64, now time.Time) (*Summa
 	return out, nil
 }
 
-// getFailureStats 依据 ERROR_LOG_ENABLED 选择失败事件来源。
+// getFailureStats 依据 ERROR_LOG_ENABLED 返回失败事件数与来源。
+// 开启：窗口内 logs.type=5 的准确行数；关闭：0，由 perfMetricsFailureEstimate 兜底估算。
 func getFailureStats(r Range) (int64, string) {
 	if constant.ErrorLogEnabled {
 		var count int64
@@ -147,38 +153,35 @@ func getFailureStats(r Range) (int64, string) {
 	return 0, failureSourcePerfMetrics
 }
 
-// perfMetricsCounters 在错误日志关闭时用 perf_metrics 的模型×分组 5 分钟桶
-// 补齐成功率口径：此时 total_calls / success_calls / failure_calls / success_rate
-// 四项**整体**取自 perf_metrics 以保证自洽；其余指标（tokens / 额度 / 延迟 / Top 榜）
-// 仍来自 logs。注意因此该状态下 Total Calls 卡片与请求明细表的行数**不同口径**
-// （实测 12837 vs 14081），前端需依据 data_source.failure_source 标注来源。
-func perfMetricsCounters(r Range, counters SummaryCounters) SummaryCounters {
+// perfMetricsFailureEstimate 在错误日志关闭时用 perf_metrics 的模型×分组 5 分钟桶
+// 估算失败数：各桶 request_count − success_count 求和，下限 0。
+// 只借它一个数——总数/成功数一律来自 logs，三项因此始终加得平，
+// 也避免了旧实现「四项整体改用 perf_metrics」时覆盖率不足（实测逐日 113%→28.8%）
+// 带来的总数漂移。
+func perfMetricsFailureEstimate(r Range) int64 {
 	summaries, err := model.GetPerfMetricsSummaryAll(r.Start, r.End, nil)
 	if err != nil {
 		common.SysError("observability: 读取 perf_metrics 失败: " + err.Error())
-		return counters
+		return 0
 	}
-	var total, success int64
+	var failures int64
 	for _, s := range summaries {
-		total += s.RequestCount
-		success += s.SuccessCount
+		failures += s.RequestCount - s.SuccessCount
 	}
-	if total == 0 {
-		return counters
-	}
-	counters.TotalCalls = total
-	counters.SuccessCalls = success
-	counters.FailureCalls = max(total-success, 0)
-	counters.SuccessRate = successRate(success, total)
-	return counters
+	return max(failures, 0)
 }
+
+// tokensJoin 只暴露 id/name 两列，理由同 query.go 的 usersJoin：tokens 表也有
+// key、used_quota 等同名列，整表 JOIN 会让本包未限定表名的列变成 ambiguous。
+// 与 users/channels 一样，tokens 位于主库。
+const tokensJoin = "LEFT JOIN (SELECT id, name FROM tokens) AS tk ON tk.id = logs.token_id"
 
 func getTopDimensions(r Range) ([]TopModel, []TopToken, []TopChannel) {
 	topModels := []TopModel{}
 	err := consumeQuery(r, Filters{}).
 		Select("logs.model_name AS model_name, COUNT(*) AS calls, COALESCE(SUM(logs.prompt_tokens + logs.completion_tokens), 0) AS total_tokens, COALESCE(SUM(logs.quota), 0) AS quota").
 		Group("logs.model_name").
-		Order("calls DESC").
+		Order("total_tokens DESC").
 		Limit(5).
 		Scan(&topModels).Error
 	if err != nil {
@@ -188,9 +191,12 @@ func getTopDimensions(r Range) ([]TopModel, []TopToken, []TopChannel) {
 
 	topTokens := []TopToken{}
 	err = consumeQuery(r, Filters{}).
-		Select("logs.token_id AS token_id, logs.token_name AS token_name, COUNT(*) AS calls, COALESCE(SUM(logs.prompt_tokens + logs.completion_tokens), 0) AS total_tokens, COALESCE(SUM(logs.quota), 0) AS quota").
-		Group("logs.token_id, logs.token_name").
-		Order("calls DESC").
+		Joins(tokensJoin).
+		// logs.token_name 是请求发生当时的名字，改名后同一 token 会因它裂成多行；
+		// 按 token_id 唯一分组，名字优先取 tokens 表的当前名，缺失时退回日志里的名字。
+		Select("logs.token_id AS token_id, COALESCE(MAX(tk.name), MAX(logs.token_name), '') AS token_name, COUNT(*) AS calls, COALESCE(SUM(logs.prompt_tokens + logs.completion_tokens), 0) AS total_tokens, COALESCE(SUM(logs.quota), 0) AS quota").
+		Group("logs.token_id").
+		Order("total_tokens DESC").
 		Limit(5).
 		Scan(&topTokens).Error
 	if err != nil {
@@ -202,7 +208,7 @@ func getTopDimensions(r Range) ([]TopModel, []TopToken, []TopChannel) {
 	err = consumeQuery(r, Filters{}).
 		Select("logs.channel_id AS channel_id, COALESCE(channels.name, '') AS channel_name, COUNT(*) AS calls, COALESCE(SUM(logs.prompt_tokens + logs.completion_tokens), 0) AS total_tokens, COALESCE(SUM(logs.quota), 0) AS quota").
 		Group("logs.channel_id, channels.name").
-		Order("calls DESC").
+		Order("total_tokens DESC").
 		Limit(5).
 		Scan(&topChannels).Error
 	if err != nil {
@@ -247,7 +253,8 @@ func buildTraffic(rows []summaryDetailRow, r Range) []TrafficPoint {
 	return sortedTraffic(bucketSeconds)
 }
 
-// buildHourlyActivity 按本地时区统计 24 小时的调用分布，固定返回 24 项。
+// buildHourlyActivity 按本地时区的「小时 of day」(0–23) 统计调用分布，固定返回 24 项。
+// now 仅用于取时区；传入区间跨多日时同一小时逐日累加。
 func buildHourlyActivity(rows []summaryDetailRow, now time.Time) []HourlyActivity {
 	hours := make([]HourlyActivity, 24)
 	for i := range hours {

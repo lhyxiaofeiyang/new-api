@@ -50,10 +50,13 @@ import { ROLE } from '@/lib/roles'
  *
  * These are shown when the URL does not match any nested sidebar view
  * registered in `layout/lib/sidebar-view-registry.ts`.
+ *
+ * Extracted from `useSidebarData` so the group order and the observability
+ * entry points can be asserted on the returned data rather than on the
+ * source text of this file. The returned value is exactly the previous
+ * `navGroups` array.
  */
-export function useSidebarData(): SidebarData {
-  const { t } = useTranslation()
-
+export function buildNavGroups(t: (key: string) => string): SidebarData {
   return {
     navGroups: [
       {
@@ -112,7 +115,7 @@ export function useSidebarData(): SidebarData {
       },
       {
         id: 'observability',
-        title: t('Observability'),
+        title: t('Token Monitoring'),
         items: [
           {
             title: t('Dashboard'),
@@ -203,4 +206,10 @@ export function useSidebarData(): SidebarData {
       },
     ],
   }
+}
+
+export function useSidebarData(): SidebarData {
+  const { t } = useTranslation()
+
+  return buildNavGroups(t)
 }

@@ -11,19 +11,25 @@ import (
 )
 
 // 维度定义：keySelect/labelSelect 只使用 SQL 通用表达式，三库行为一致。
+// join 只在 label 需要当前名时使用（见 token 维度），派生表口径与 query.go 一致。
 type dimensionSpec struct {
 	name        string
 	keySelect   string
 	groupBy     string
+	join        string
 	labelSelect string
 }
 
 var dimensionSpecs = map[string]dimensionSpec{
 	"token": {
-		name:        "token",
-		keySelect:   "CAST(logs.token_id AS CHAR)",
-		groupBy:     "logs.token_id",
-		labelSelect: "MAX(logs.token_name)",
+		name:      "token",
+		keySelect: "CAST(logs.token_id AS CHAR)",
+		groupBy:   "logs.token_id",
+		join:      tokensJoin,
+		// 名字取 tokens 表的当前名：改名后同一 token_id 会留下多批历史名，
+		// 与仪表盘 Top 排行保持同一口径。名称为空（含空串）或缺行时回退历史名，
+		// 两者都拿不到才退回空串，避免显示成空白。
+		labelSelect: "COALESCE(NULLIF(MAX(tk.name), ''), MAX(logs.token_name), '')",
 	},
 	"channel": {
 		name:        "channel",
@@ -150,8 +156,12 @@ func GetUsage(rangeName string, startRaw, endRaw int64, dimension, matrix, granu
 	}
 
 	aggregates := []usageAggregateRow{}
-	err = consumeQuery(r, Filters{}).
-		Select(fmt.Sprintf(`%s AS key, %s AS label,
+	query := consumeQuery(r, Filters{})
+	if spec.join != "" {
+		query = query.Joins(spec.join)
+	}
+	err = query.
+		Select(fmt.Sprintf(`%s AS %s, %s AS label,
 			COUNT(*) AS calls,
 			COALESCE(SUM(CASE WHEN logs.use_time > 0 THEN 1 ELSE 0 END), 0) AS success_calls,
 			COALESCE(SUM(logs.prompt_tokens), 0) AS prompt_tokens,
@@ -159,7 +169,7 @@ func GetUsage(rangeName string, startRaw, endRaw int64, dimension, matrix, granu
 			COALESCE(SUM(logs.quota), 0) AS quota,
 			COALESCE(SUM(logs.use_time), 0) AS latency_sum,
 			COALESCE(SUM(CASE WHEN logs.use_time > 0 THEN 1 ELSE 0 END), 0) AS latency_count`,
-			spec.keySelect, spec.labelSelect)).
+			spec.keySelect, dimensionKeyAlias(), spec.labelSelect)).
 		Group(spec.groupBy).
 		Order("calls DESC").
 		Limit(limit).
@@ -248,7 +258,7 @@ func aggregatingOtherByDimension(r Range, spec dimensionSpec) (map[string]int64,
 	ttft := map[string]averageAccumulator{}
 	rows := []usageOtherRow{}
 	err := consumeQuery(r, Filters{}).
-		Select(fmt.Sprintf("%s AS key, logs.other AS other", spec.keySelect)).
+		Select(fmt.Sprintf("%s AS %s, logs.other AS other", spec.keySelect, dimensionKeyAlias())).
 		Scan(&rows).Error
 	if err != nil {
 		common.SysError("observability: 读取维度 other 失败: " + err.Error())
@@ -283,7 +293,7 @@ func failureCountsByDimension(r Range, spec dimensionSpec) map[string]int64 {
 		Calls int64  `gorm:"column:calls"`
 	}{}
 	err := errorQuery(r, Filters{}).
-		Select(fmt.Sprintf("%s AS key, COUNT(*) AS calls", spec.keySelect)).
+		Select(fmt.Sprintf("%s AS %s, COUNT(*) AS calls", spec.keySelect, dimensionKeyAlias())).
 		Group(spec.groupBy).
 		Scan(&rows).Error
 	if err != nil {

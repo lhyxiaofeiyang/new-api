@@ -52,7 +52,7 @@
     "top_tokens": [ { "token_id": 0, "token_name": "", "calls": 0, "total_tokens": 0, "quota": 0 } ],
     "top_channels": [ { "channel_id": 0, "channel_name": "", "calls": 0, "total_tokens": 0, "quota": 0 } ],
     "traffic": [ { "ts": 0, "calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "quota": 0 } ],
-    "hourly_activity": [ { "hour": 0, "calls": 0 } ],   // 24 项，Go 侧分桶
+    "hourly_activity": [ { "hour": 0, "calls": 0 } ],   // 固定 24 项，按本地时区的「小时 of day」(0–23) 分桶；传入区间跨多日时逐日累加，不是最近 24h 滑窗
     "health_timeline": [ { "ts": 0, "calls": 0, "failures": 0 } ]  // 10 分钟桶 ×144
   }
 }

@@ -39,13 +39,6 @@ export function formatLatencyMs(value: number | null | undefined): string {
   return `${formatNumber(Math.round(ms))}ms`
 }
 
-/** USD amounts always keep two decimals, per the UI spec. */
-export function formatUsd(value: number | null | undefined): string {
-  const amount = Number(value ?? 0)
-  if (!Number.isFinite(amount)) return '-'
-  return `$${amount.toFixed(2)}`
-}
-
 /** Share arrives as a 0-1 ratio and is displayed as a percentage. */
 export function formatShare(value: number | null | undefined): string {
   const ratio = Number(value ?? 0)
@@ -57,9 +50,4 @@ export function formatSuccessRate(value: number | null | undefined): string {
   const rate = Number(value ?? 0)
   if (!Number.isFinite(rate)) return '-'
   return `${rate.toFixed(2)}%`
-}
-
-/** Zero rows must render as an empty state, never as a table of zeroes. */
-export function hasNoRows(rows: unknown[] | null | undefined): boolean {
-  return !rows || rows.length === 0
 }

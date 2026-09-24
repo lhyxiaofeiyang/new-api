@@ -23,8 +23,19 @@ import { describe, test } from 'vitest'
 import { observabilitySearchSchema } from '../lib/search'
 
 describe('observability url search schema', () => {
-  test('accepts an empty search so the pages open on their defaults', () => {
-    assert.deepEqual(observabilitySearchSchema.parse({}), {})
+  test('defaults the matrix on an empty search so the panel has a pairing', () => {
+    // Everything else stays absent; only the matrix is filled, because the
+    // panel always displays one pairing and a missing value blanks it.
+    assert.deepEqual(observabilitySearchSchema.parse({}), {
+      matrix: 'token_model',
+    })
+  })
+
+  test('recovers an unusable matrix value rather than dropping the key', () => {
+    assert.equal(
+      observabilitySearchSchema.parse({ matrix: 'nope' }).matrix,
+      'token_model'
+    )
   })
 
   test('keeps every documented filter', () => {

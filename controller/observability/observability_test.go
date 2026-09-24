@@ -51,6 +51,14 @@ func newEmptyDB(t *testing.T) {
 		username TEXT,
 		quota INTEGER
 	)`).Error)
+	// Top 令牌的当前名走 tokens JOIN，夹具需要该表；真库 tokens 同样有 key、
+	// used_quota 等同名列，这里一并还原，避免漏掉 JOIN 造成的列名歧义。
+	require.NoError(t, db.Exec(`CREATE TABLE tokens (
+		id INTEGER PRIMARY KEY,
+		name TEXT,
+		key TEXT,
+		used_quota INTEGER
+	)`).Error)
 
 	previousLogDB, previousDB := model.LOG_DB, model.DB
 	model.LOG_DB, model.DB = db, db
@@ -285,7 +293,7 @@ func TestWriteRequestsCSVDoesNotLeakSecrets(t *testing.T) {
 	status := 500
 	summary := "upstream 500"
 	c, recorder := newTestContext(t, "/x")
-	require.NoError(t, writeRequestsCSV(c.Writer, []obs.RequestItem{{
+	require.NoError(t, writeRequestsCSV(c.Writer, &obs.ExportRequest{Rows: []obs.RequestItem{{
 		Id:             1,
 		CreatedAt:      1758500000,
 		RequestId:      "req-1",
@@ -305,7 +313,7 @@ func TestWriteRequestsCSVDoesNotLeakSecrets(t *testing.T) {
 		IsFailed:       true,
 		FailStatusCode: &status,
 		FailSummary:    &summary,
-	}}))
+	}}}))
 
 	out := recorder.Body.String()
 	assert.Contains(t, out, "key-a")
@@ -356,18 +364,41 @@ func TestNeedsFormulaGuard(t *testing.T) {
 // TestWriteRequestsCSVNeutralizesInjection 确认用户可控字段无法注入公式。
 func TestWriteRequestsCSVNeutralizesInjection(t *testing.T) {
 	c, recorder := newTestContext(t, "/x")
-	require.NoError(t, writeRequestsCSV(c.Writer, []obs.RequestItem{{
+	require.NoError(t, writeRequestsCSV(c.Writer, &obs.ExportRequest{Rows: []obs.RequestItem{{
 		Id:          1,
 		RequestId:   "=HYPERLINK(\"http://evil\")",
 		TokenName:   "@SUM(A1)",
 		ModelName:   "+1",
 		ChannelName: "-2",
-	}}))
+	}}}))
 
 	out := recorder.Body.String()
 	for _, want := range []string{`"'=HYPERLINK(""http://evil"")"`, "'@SUM(A1)", "'+1", "'-2"} {
 		assert.Contains(t, out, want)
 	}
+}
+
+// TestWriteRequestsCSVMarksTruncation 锁死「导出被截断必须可见」：
+// 截断时末尾追加注释行并带上 total/exported，未截断时不得出现该行。
+func TestWriteRequestsCSVMarksTruncation(t *testing.T) {
+	c, recorder := newTestContext(t, "/x")
+	require.NoError(t, writeRequestsCSV(c.Writer, &obs.ExportRequest{
+		Rows:      []obs.RequestItem{{Id: 1, RequestId: "req-1"}},
+		Total:     120,
+		Truncated: true,
+	}))
+
+	out := recorder.Body.String()
+	assert.Contains(t, out, "# truncated: total=120 exported=1")
+
+	// 未截断：不得出现注释行，否则前端会误报。
+	c2, recorder2 := newTestContext(t, "/x")
+	require.NoError(t, writeRequestsCSV(c2.Writer, &obs.ExportRequest{
+		Rows:      []obs.RequestItem{{Id: 1, RequestId: "req-1"}},
+		Total:     1,
+		Truncated: false,
+	}))
+	assert.NotContains(t, recorder2.Body.String(), "# truncated")
 }
 
 func TestFailureStatusCodeAndSummary(t *testing.T) {
@@ -387,10 +418,10 @@ func TestFailureStatusCodeAndSummary(t *testing.T) {
 func TestFailureSummaryCollapsesNewlines(t *testing.T) {
 	summary := "line one\nline two\r\nline three"
 	c, recorder := newTestContext(t, "/x")
-	require.NoError(t, writeRequestsCSV(c.Writer, []obs.RequestItem{{
+	require.NoError(t, writeRequestsCSV(c.Writer, &obs.ExportRequest{Rows: []obs.RequestItem{{
 		Id:          1,
 		FailSummary: &summary,
-	}}))
+	}}}))
 
 	out := recorder.Body.String()
 	assert.Contains(t, out, "line one line two line three")

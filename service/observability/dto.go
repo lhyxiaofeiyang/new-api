@@ -11,6 +11,9 @@ type Range struct {
 }
 
 // DataSource 自述数据来源与口径，前端据此决定是否展示失败明细。
+// FailureSource 只描述「失败数」的来源：error_log = 窗口内 logs.type=5 的准确行数；
+// perf_metrics = 错误日志关闭时的估算值（各桶 request_count − success_count，下限 0）。
+// total_calls / success_calls 与 LogRows 恒取自消费日志（logs.type=2），不随开关变化。
 type DataSource struct {
 	ErrorLogEnabled bool   `json:"error_log_enabled"`
 	FailureSource   string `json:"failure_source"`
@@ -18,7 +21,6 @@ type DataSource struct {
 }
 
 const (
-	failureSourceNone        = "none"
 	failureSourceErrorLog    = "error_log"
 	failureSourcePerfMetrics = "perf_metrics"
 )
@@ -80,7 +82,8 @@ type TrafficPoint struct {
 	Quota            int64 `json:"quota"`
 }
 
-// HourlyActivity 是本地时区 24 小时活跃分布，固定 24 项。
+// HourlyActivity 是本地时区按「小时 of day」(0–23) 的调用分布，固定 24 项。
+// 区间跨多日时同一小时逐日累加，因此这是「一天中各小时的分布」，不是最近 24h 滑窗。
 type HourlyActivity struct {
 	Hour  int   `json:"hour"`
 	Calls int64 `json:"calls"`

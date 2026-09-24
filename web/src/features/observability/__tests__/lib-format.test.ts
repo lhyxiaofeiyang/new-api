@@ -25,8 +25,6 @@ import {
   formatShare,
   formatSuccessRate,
   formatTokenCount,
-  formatUsd,
-  hasNoRows,
 } from '../lib/format'
 
 describe('observability number formatting', () => {
@@ -51,11 +49,6 @@ describe('observability number formatting', () => {
     assert.equal(formatLatencyMs(1500), '1.5s')
   })
 
-  test('renders USD with exactly two decimals', () => {
-    assert.equal(formatUsd(12.3456), '$12.35')
-    assert.equal(formatUsd(0), '$0.00')
-  })
-
   test('renders the share ratio as a two-decimal percentage', () => {
     assert.equal(formatShare(0.12345), '12.35%')
     assert.equal(formatShare(0), '0.00%')
@@ -63,11 +56,5 @@ describe('observability number formatting', () => {
 
   test('renders the success rate already expressed as a percentage', () => {
     assert.equal(formatSuccessRate(99.456), '99.46%')
-  })
-
-  test('treats an absent or empty row set as no data', () => {
-    assert.equal(hasNoRows([]), true)
-    assert.equal(hasNoRows(undefined), true)
-    assert.equal(hasNoRows([1]), false)
   })
 })

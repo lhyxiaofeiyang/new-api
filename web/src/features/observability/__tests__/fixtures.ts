@@ -174,6 +174,13 @@ export const USAGE_RESPONSE: ObservabilityUsageResponse = {
     quota: 5_000_000,
     cost_usd: 10,
   },
+  // 真实接口必返回 data_source（usage_service 会带上错误日志开关），夹具补全它，
+  // 否则前端拿不到开关状态，会按"未开启"渲染就地提示。
+  data_source: {
+    error_log_enabled: true,
+    failure_source: 'error_log',
+    log_rows: 12_480,
+  },
 }
 
 /** The same summary with error logs switched off on the instance. */
@@ -188,5 +195,82 @@ export const SUMMARY_RESPONSE_NO_ERROR_LOG: ObservabilitySummaryResponse = {
     failure_source: 'perf_metrics',
     log_rows: 12_480,
   },
+  // 关闭错误日志时后端照常上报调用分桶，但失败分桶恒为 0。
+  health_timeline: [{ ts: 1_758_480_000, calls: 120, failures: 0 }],
+}
+
+/**
+ * 「请求健康度」车道的边界夹具（错误日志开启：标题为 calls/failures，按失败率着色）。
+ * 5 个桶覆盖四种归一/着色分支——
+ * - calls 100/failures 20（失败率 20% → 判红）同时是最大桶，归一 100%；
+ * - calls 50/failures 1（失败率 2% → 警告色），归一 50%；
+ * - calls 25/failures 0（健康色），归一 25%；
+ * - calls 0：高度必须为 0 但仍占位（不得被过滤，否则时间轴失真）；
+ * - calls 1：归一仅 1%，必须被 2% 下限抬到可见。
+ */
+export const SUMMARY_RESPONSE_HEALTH_LANE: ObservabilitySummaryResponse = {
+  ...SUMMARY_RESPONSE,
+  data_source: {
+    error_log_enabled: true,
+    failure_source: 'error_log',
+    log_rows: 12_480,
+  },
+  health_timeline: [
+    { ts: 1_758_480_000, calls: 100, failures: 20 },
+    { ts: 1_758_480_600, calls: 50, failures: 1 },
+    { ts: 1_758_481_200, calls: 25, failures: 0 },
+    { ts: 1_758_481_800, calls: 0, failures: 0 },
+    { ts: 1_758_482_400, calls: 1, failures: 0 },
+  ],
+}
+
+/**
+ * Top 榜的边界夹具（与上面的主夹具相互独立，只覆盖排行面板关心的约束）：
+ * - mac | Hermes | OpenAI / small-key 的 quota 都是 100000、token 数却是
+ *   620000 / 310000，用来把「条宽按 token 归一」与「按 quota 归一」区分开；
+ * - token_id=4 曾是同名分裂行的受害者，这里给出后端修复后的形状（同一 token_id
+ *   一行、名字为 tokens 表的当前名、calls/tokens 为合并值）。「改名不得再拆行」
+ *   由 service/observability 的单测钉住；前端只负责按 payload 渲染，不做合并，
+ *   因此这里不伪造修复前的分裂 payload。
+ */
+export const SUMMARY_RESPONSE_TOP_LISTS: ObservabilitySummaryResponse = {
+  range: { start: 1_758_480_000, end: 1_758_566_400, range: '24h' },
+  data_source: {
+    error_log_enabled: false,
+    failure_source: 'perf_metrics',
+    log_rows: 2_019,
+  },
+  summary: {
+    ...SUMMARY_RESPONSE.summary,
+    total_calls: 2_019,
+    success_calls: 2_010,
+    failure_calls: 9,
+    success_rate: 99.55,
+    prompt_tokens: 600_000,
+    completion_tokens: 330_000,
+    total_tokens: 930_000,
+    total_quota: 200_000,
+  },
+  rolling: { rpm: 0, tpm: 0 },
+  top_models: [],
+  top_tokens: [
+    {
+      token_id: 4,
+      token_name: 'mac | Hermes | OpenAI',
+      calls: 1_719,
+      total_tokens: 620_000,
+      quota: 100_000,
+    },
+    {
+      token_id: 9,
+      token_name: 'small-key',
+      calls: 300,
+      total_tokens: 310_000,
+      quota: 100_000,
+    },
+  ],
+  top_channels: [],
+  traffic: [],
+  hourly_activity: [],
   health_timeline: [],
 }

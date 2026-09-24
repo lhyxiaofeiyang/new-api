@@ -22,6 +22,8 @@ import { join } from 'node:path'
 
 import { describe, test } from 'vitest'
 
+import { buildNavGroups } from '@/hooks/use-sidebar-data'
+
 import { OBSERVABILITY_SECTIONS, OBSERVABILITY_SECTION_IDS } from '../constants'
 
 const LOCALES_DIR = join(process.cwd(), 'src/i18n/locales')
@@ -51,24 +53,23 @@ describe('observability navigation entry', () => {
   })
 
   test('places the observability group immediately after general', () => {
-    const source = readFileSync(
-      join(process.cwd(), 'src/hooks/use-sidebar-data.ts'),
-      'utf8'
-    )
-    const order = [...source.matchAll(/^ {8}id: '([a-z_]+)',$/gm)].map(
-      (match) => match[1]
-    )
-    assert.equal(order.includes('general'), true)
-    assert.equal(order[order.indexOf('general') + 1], 'observability')
+    const groups = buildNavGroups((key) => key).navGroups
+    const ids = groups.map((group) => group.id)
+    assert.equal(ids.includes('general'), true)
+    assert.equal(ids[ids.indexOf('general') + 1], 'observability')
   })
 
   test('points each sidebar item at the matching section url', () => {
-    const source = readFileSync(
-      join(process.cwd(), 'src/hooks/use-sidebar-data.ts'),
-      'utf8'
-    )
+    const groups = buildNavGroups((key) => key).navGroups
+    const observability = groups.find((group) => group.id === 'observability')
+    assert.ok(observability, 'observability group is missing')
+    const urls = new Set(observability.items.map((item) => item.url))
     for (const section of OBSERVABILITY_SECTIONS) {
-      assert.match(source, new RegExp(`url: '/observability/${section.id}'`))
+      assert.equal(
+        urls.has(`/observability/${section.id}`),
+        true,
+        `${section.id} has no sidebar url`
+      )
     }
   })
 })
@@ -93,7 +94,10 @@ describe('observability locale coverage', () => {
     'Cost Composition',
     'Traffic Trend',
     '{{count}} rows',
-    '{{calls}} calls · {{tokens}} tokens',
+    '{{tokens}} tokens',
+    '{{calls}} calls · {{amount}}',
+    'Failures counted since error logs were enabled',
+    'Failures are estimated; enable error logs for exact counts',
     '{{y}} × {{x}} · cells show {{metric}}',
   ]
 

@@ -46,6 +46,16 @@ export interface ObservabilityRangeInfo {
   range: string
 }
 
+/**
+ * Mirrors `service/observability/dto.go`'s `DataSource`.
+ *
+ * Scope v2 (user-decided 2026-09-23): `total_calls` / `success_calls` and
+ * `log_rows` always come from the consumption logs (`logs.type = 2`);
+ * `failure_source` describes the **failure count only**. No extra field was
+ * added for a "failure stats since" timestamp — `constant.ErrorLogEnabled` is a
+ * plain env-driven bool with no persisted enable time, so there is nothing
+ * truthful to send. The card qualifier therefore states the rule, not a date.
+ */
 export interface ObservabilityDataSource {
   error_log_enabled: boolean
   failure_source: FailureSource
@@ -233,6 +243,9 @@ export interface ObservabilityUsageResponse {
   trend: UsageTrendPoint[]
   matrix?: UsageMatrixData
   totals: UsageTotals
+  // 后端 usage 响应同样带 data_source（service/observability/dto.go:216），
+  // 此前前端类型漏了这个字段，导致读不到错误日志开关。
+  data_source: ObservabilityDataSource
 }
 
 /** URL search state shared by the three pages. */

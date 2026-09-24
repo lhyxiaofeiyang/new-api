@@ -33,7 +33,6 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -53,6 +52,7 @@ import {
 } from '../lib/format'
 import { resolveTimeRange } from '../lib/query'
 import type {
+  FailureSource,
   HealthTimelinePoint,
   ObservabilitySearch,
   ObservabilitySummary,
@@ -78,16 +78,32 @@ interface MetricDefinition {
   descriptionKey?: string
   /** Preformatted sub-line (values that are not translation keys). */
   description?: string
+  /**
+   * i18n key for a second, muted sub-line that qualifies the value itself
+   * rather than describing it (currently only the stream-calls denominator).
+   */
+  noteKey?: string
   icon: LucideIcon
   tone: Tone
 }
 
 /**
- * Every card shows a value: the backend computes the success rate from error
- * logs when they are enabled, and from the `perf_metrics` buckets otherwise.
- * Only per-request failure *details* depend on error logs.
+ * Success Rate sub-line. Scope v2: every counter comes from the consumption
+ * logs, so "success / total" is always arithmetically consistent; only the
+ * *failure* count switches source, and that has to be disclosed on the card.
  */
-function buildMetrics(summary: ObservabilitySummary): MetricDefinition[] {
+function failureSourceNoteKey(
+  failureSource: FailureSource
+): string | undefined {
+  if (failureSource === 'error_log') return 'Failures counted since error logs were enabled'
+  if (failureSource === 'perf_metrics') return 'Failures are estimated; enable error logs for exact counts'
+  return undefined
+}
+
+function buildMetrics(
+  summary: ObservabilitySummary,
+  failureSource: FailureSource
+): MetricDefinition[] {
   return [
     {
       key: 'calls',
@@ -126,6 +142,7 @@ function buildMetrics(summary: ObservabilitySummary): MetricDefinition[] {
       titleKey: 'Success Rate',
       value: formatSuccessRate(summary.success_rate),
       description: `${formatNumber(summary.success_calls)} / ${formatNumber(summary.total_calls)}`,
+      noteKey: failureSourceNoteKey(failureSource),
       icon: TrendingUp,
       tone: 'accent-2',
     },
@@ -158,6 +175,9 @@ function buildMetrics(summary: ObservabilitySummary): MetricDefinition[] {
       titleKey: 'Stream Calls',
       value: formatNumber(summary.stream_calls),
       descriptionKey: 'Requests served as a stream',
+      // 口径 v2：总数与流式数均取自消费日志，混源条件不复存在，故原先的
+      // 「From consumption logs」限定语已删除（否则它在错误日志关闭时仍会渲染，
+      // 而它描述的「总数来自 perf_metrics」在 v2 下已不成立，属于误导）。
       icon: RadioTower,
       tone: 'accent-3',
     },
@@ -188,7 +208,7 @@ interface TopListProps {
 
 function TopList(props: TopListProps) {
   const { t } = useTranslation()
-  const maxQuota = Math.max(1, ...props.rows.map((row) => row.quota))
+  const maxTokens = Math.max(1, ...props.rows.map((row) => row.tokens))
 
   return (
     <PanelWrapper
@@ -206,13 +226,15 @@ function TopList(props: TopListProps) {
                 {row.label}
               </span>
               <span className='shrink-0 text-xs font-semibold tabular-nums'>
-                {formatQuota(row.quota)}
+                {t('{{tokens}} tokens', {
+                  tokens: formatTokenCount(row.tokens),
+                })}
               </span>
             </div>
             <div className='text-muted-foreground mt-1 text-xs tabular-nums'>
-              {t('{{calls}} calls · {{tokens}} tokens', {
+              {t('{{calls}} calls · {{amount}}', {
                 calls: formatNumber(row.calls),
-                tokens: formatTokenCount(row.tokens),
+                amount: formatQuota(row.quota),
               })}
             </div>
             <div
@@ -221,7 +243,7 @@ function TopList(props: TopListProps) {
             >
               <div
                 className='bg-chart-1 h-full rounded-full'
-                style={{ width: `${(row.quota / maxQuota) * 100}%` }}
+                style={{ width: `${(row.tokens / maxTokens) * 100}%` }}
               />
             </div>
           </li>
@@ -276,25 +298,46 @@ function HealthTimelinePanel(props: {
 }) {
   const { t } = useTranslation()
   const maxCalls = Math.max(1, ...props.points.map((point) => point.calls))
-  const hasData = props.errorLogEnabled && props.points.length > 0
 
   if (props.loading) {
-    return <PanelWrapper title={t('Request Health')} loading height='h-14' />
+    return (
+      <PanelWrapper
+        title={t('Request Health')}
+        loading
+        className='flex flex-col'
+        contentClassName='flex flex-1 flex-col'
+        // h-full 撑满拉伸后的卡片；min-h-14 兜住单列（移动端）下卡片高度为 auto、
+        // h-full 无法求解时骨架塌成 0 的情况。
+        height='h-full min-h-14'
+      />
+    )
   }
 
+  // 与左侧图表（h-64）同行时，grid 的 stretch 会把本卡片拉到同高。className 让卡片
+  // 成为纵向 flex 容器（PanelWrapper 只把它拼到卡片外层），contentClassName 让内容区
+  // 吃掉表头之外的全部高度，车道再 h-full 铺满——否则车道固定高度只占卡片一小截。
   return (
     <PanelWrapper
       title={t('Request Health')}
       description={t('10-minute buckets · last 24 hours')}
-      empty={!hasData}
-      emptyMessage={
-        props.errorLogEnabled
-          ? t('No data available')
-          : t('Enable error logs to track failures')
+      headerActions={
+        props.errorLogEnabled ? undefined : (
+          <Badge variant='secondary' className='text-muted-foreground text-xs'>
+            {t('Requires error logs')}
+          </Badge>
+        )
       }
-      height='h-14'
+      empty={props.points.length === 0}
+      emptyMessage={t('No data available')}
+      className='flex flex-col'
+      contentClassName='flex flex-1 flex-col'
     >
-      <div className='flex h-14 items-end gap-px'>
+      {/*
+      注意：空数据分支由 PanelWrapper 处理。错误日志关闭时后端照样上报调用分桶，
+      只是失败分桶恒为 0，因此「有桶」==「后端有返回」，只有真正无数据才会走空态。
+      min-h-14 兜住单列（移动端）下卡片高度为 auto、h-full 无法求解时车道塌成 0 的情况。
+      */}
+      <div className='flex h-full min-h-14 items-end gap-px'>
         {props.points.map((point) => {
           const ratio = point.calls > 0 ? point.failures / point.calls : 0
           return (
@@ -302,12 +345,26 @@ function HealthTimelinePanel(props: {
               key={point.ts}
               className={cn(
                 'min-w-px flex-1 rounded-t-sm',
-                healthToneClass(ratio)
+                // 关闭错误日志时后端不上报失败分桶，此时按失败率着色会把所有桶画成
+                // "健康"（绿色），属于会误导人的假象；改用中性色只表达调用量。
+                props.errorLogEnabled
+                  ? healthToneClass(ratio)
+                  : 'bg-muted-foreground/40'
               )}
+              // 车道铺满卡片高度、按该桶/最大桶归一，并留 2% 可见下限。
+              // 0 调用的桶高度为 0（不画柱）但仍保留横向占位，否则时间轴会失真、
+              // 空闲时段被视觉抹平：这里只改高度，不从数组里过滤。
               style={{
-                height: `${Math.max(8, (point.calls / maxCalls) * 100)}%`,
+                height:
+                  point.calls === 0
+                    ? '0%'
+                    : `${Math.max(2, (point.calls / maxCalls) * 100)}%`,
               }}
-              title={`${formatNumber(point.calls)} / ${formatNumber(point.failures)}`}
+              title={
+                props.errorLogEnabled
+                  ? `${formatNumber(point.calls)} / ${formatNumber(point.failures)}`
+                  : formatNumber(point.calls)
+              }
             />
           )
         })}
@@ -327,7 +384,8 @@ export function OverviewPage(props: OverviewPageProps) {
 
   const summary = data?.summary
   const errorLogEnabled = data?.data_source.error_log_enabled ?? false
-  const metrics = summary ? buildMetrics(summary) : []
+  const failureSource = data?.data_source.failure_source ?? 'none'
+  const metrics = summary ? buildMetrics(summary, failureSource) : []
   const traffic = data?.traffic ?? []
   const hourly = data?.hourly_activity ?? []
 
@@ -367,20 +425,6 @@ export function OverviewPage(props: OverviewPageProps) {
       </SectionPageLayout.Actions>
       <SectionPageLayout.Content>
         <div className='space-y-3 sm:space-y-4'>
-          {!isLoading && data && !errorLogEnabled && (
-            <Alert
-              variant='default'
-              className='border-warning/40 bg-warning/10'
-            >
-              <AlertTitle>{t('Failure details are unavailable')}</AlertTitle>
-              <AlertDescription>
-                {t(
-                  'Per-request failure details require error logs, which are disabled on this instance'
-                )}
-              </AlertDescription>
-            </Alert>
-          )}
-
           <PanelWrapper
             title={t('Real-time Traffic')}
             description={t('Last 60 seconds')}
@@ -404,20 +448,28 @@ export function OverviewPage(props: OverviewPageProps) {
               </div>
             ) : (
               <div className='grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-5'>
-                {metrics.map((metric) => (
-                  <StatCard
-                    key={metric.key}
-                    title={t(metric.titleKey)}
-                    value={metric.value}
-                    description={
-                      metric.description ??
-                      (metric.descriptionKey ? t(metric.descriptionKey) : '')
-                    }
-                    icon={metric.icon}
-                    tone={metric.tone}
-                    compactMobile
-                  />
-                ))}
+                {metrics.map((metric) => {
+                  let description =
+                    metric.description ??
+                    (metric.descriptionKey ? t(metric.descriptionKey) : '')
+                  if (metric.noteKey) {
+                    description = description
+                      ? `${description} · ${t(metric.noteKey)}`
+                      : t(metric.noteKey)
+                  }
+
+                  return (
+                    <StatCard
+                      key={metric.key}
+                      title={t(metric.titleKey)}
+                      value={metric.value}
+                      description={description}
+                      icon={metric.icon}
+                      tone={metric.tone}
+                      compactMobile
+                    />
+                  )
+                })}
               </div>
             )}
           </PanelWrapper>
@@ -451,7 +503,7 @@ export function OverviewPage(props: OverviewPageProps) {
 
           <div className='grid gap-3 sm:gap-4 lg:grid-cols-2'>
             <ChartPanel
-              title={t('24h Activity Distribution')}
+              title={t('Hourly distribution (hour of day)')}
               spec={buildHourlyActivitySpec(hourly, t)}
               loading={isLoading}
               empty={!isLoading && hourly.length === 0}

@@ -108,6 +108,14 @@ export const MATRIX_OPTIONS: Array<{
   },
 ]
 
+/**
+ * The matrix selector has no "all" option: the panel always shows one of the
+ * three pairings, so the URL default must name one. Without it the first load
+ * asked the endpoint for no matrix at all and the panel rendered empty until
+ * the user touched a filter and a matrix value finally reached the URL.
+ */
+export const DEFAULT_USAGE_MATRIX: UsageMatrix = 'token_model'
+
 export const USAGE_METRIC_OPTIONS = [
   { value: 'calls', labelKey: 'Calls' },
   { value: 'total_tokens', labelKey: 'Tokens' },

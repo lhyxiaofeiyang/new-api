@@ -11,7 +11,13 @@ set -euo pipefail
 
 BRANCH="feat/observability"
 TMP_BRANCH="sync-probe/upstream"
-TOUCHPOINTS=("router/api-router.go" "web/src/hooks/use-sidebar-data.ts" "web/src/i18n/locales")
+TOUCHPOINTS=(
+  "router/api-router.go"
+  "web/src/hooks/use-sidebar-data.ts"
+  "web/src/i18n/locales"
+  "web/src/features/keys/components/api-keys-table.tsx"
+  "web/src/features/keys/components/__tests__/api-key-listing.test.tsx"
+)
 
 cd "$(git rev-parse --show-toplevel)"
 

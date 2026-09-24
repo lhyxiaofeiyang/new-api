@@ -152,4 +152,9 @@ export const EMPTY_USAGE_RESPONSE: ObservabilityUsageResponse = {
   rows: [],
   trend: [],
   totals: { calls: 0, total_tokens: 0, quota: 0, cost_usd: 0 },
+  data_source: {
+    error_log_enabled: false,
+    failure_source: 'none',
+    log_rows: 0,
+  },
 }

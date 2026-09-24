@@ -48,19 +48,29 @@ func ExportRequests(c *gin.Context) {
 
 	c.Header("Content-Disposition", `attachment; filename="newapi-observability-`+rangeLabel+`-`+timestamp+`.csv"`)
 	c.Header("Content-Type", "text/csv; charset=utf-8")
+	// 截断事实随下载链路发出，避免「导出成功」掩盖只导出了一部分。
+	// 选择写进正文（CSV 末尾注释行）而不是自定义响应头：跨域部署时浏览器
+	// 读不到未 Expose-Headers 的自定义头（middleware/cors.go 未暴露任何头），
+	// 而正文是前端唯一能稳定读到的通道。
+	if exported.Truncated {
+		c.Header("X-Export-Truncated", "true")
+	}
 	c.Status(200)
 	// Excel 需要 UTF-8 BOM 才能正确识别中文列名；此处用转义写法，源码内不得出现 BOM 字符。
 	c.Writer.WriteString("\ufeff")
-	if err := writeRequestsCSV(c.Writer, exported.Rows); err != nil {
+	if err := writeRequestsCSV(c.Writer, exported); err != nil {
 		common.SysError("observability: 导出 CSV 失败: " + err.Error())
 	}
 }
 
-func writeRequestsCSV(writer gin.ResponseWriter, rows []obs.RequestItem) error {
+// writeRequestsCSV 输出表头 + 数据行；被截断时追加一行 '# truncated' 注释，
+// 让下载方（前端 / 人）能看出文件是不完整的。该行以 '#' 开头，不在列数上
+// 与数据行争位（Excel 会把它当普通单元格，肉眼可辨）。
+func writeRequestsCSV(writer gin.ResponseWriter, exported *obs.ExportRequest) error {
 	if _, err := writer.WriteString(strings.Join(csvHeader, ",") + "\n"); err != nil {
 		return err
 	}
-	for _, row := range rows {
+	for _, row := range exported.Rows {
 		record := []string{
 			strconv.Itoa(row.Id),
 			strconv.FormatInt(row.CreatedAt, 10),
@@ -89,6 +99,13 @@ func writeRequestsCSV(writer gin.ResponseWriter, rows []obs.RequestItem) error {
 			escaped = append(escaped, escapeCSVField(value))
 		}
 		if _, err := writer.WriteString(strings.Join(escaped, ",") + "\n"); err != nil {
+			return err
+		}
+	}
+	if exported.Truncated {
+		trailer := "# truncated: total=" + strconv.FormatInt(exported.Total, 10) +
+			" exported=" + strconv.Itoa(len(exported.Rows)) + "\n"
+		if _, err := writer.WriteString(trailer); err != nil {
 			return err
 		}
 	}
