@@ -183,3 +183,103 @@ git diff --name-only upstream/main..HEAD       | wc -l   # 合并后：71
   只动 `.github/workflows/`，**不影响本地打包命令**；本轮顺带并入。
 - 本轮**未** rebase、**未** force push、**未** `checkout --ours/--theirs`、**未**碰生产、**未**重建产物、**未**重启实例、
   **未**修改上游既有文件逻辑（冲突数为 0，故无任何冲突解决改动）、**未**扩白名单。
+
+## 7. 本轮合并记录（upgrade2，2026-10-09）
+
+第二次实执行「把 `upstream/main` 合进 `feat/observability`」，对应上游 `v1.0.0-rc.41`、`v1.0.0-rc.42`。
+**merge，非 rebase**；无冲突；`--no-edit` 自动合成为一次合并提交。
+
+### 7.1 合并参数（均为实跑输出）
+
+| 项 | 值 | 复算命令 |
+|---|---|---|
+| 合并前本 fork HEAD | `caaafed1de90f1786010c4bcea5d2c84a358173f` | `git rev-parse HEAD` |
+| 合并前 merge-base | `d04c118c8803f49e0c9bab74dcf5b5efeab9464a` | `git merge-base upstream/main HEAD` |
+| 合并入的 `upstream/main` | `e0483122c7d3693629f0e84473380a8c9506c56a` | `git rev-parse upstream/main` |
+| 合并提交 | `9955990eb3a819f622977c3897c74a465860c191` | `git log -1 --format='%H %s'` |
+| 合并提交双亲 | `caaafed1d` + `e0483122c` | `git log -1 --format='%P'` |
+| 并入的上游提交数 | **42**（`git rev-list --count HEAD^1..HEAD` 输出 43，含合并提交本身） | `git rev-list --count d04c118c8..e0483122c` |
+| 上游侧改动面 | **303 文件 / 42 提交** | `git diff --name-only d04c118c8 e0483122c \| wc -l` |
+| 冲突数 | **0**（`ort` 策略自动合并） | `git merge upstream/main --no-edit` |
+
+本轮两侧改动文件**有交集**（9 个：路由、侧边栏、7 个语言包），但仍无文本冲突：
+
+```bash
+comm -12 <(git diff --name-only e0483122c HEAD | sort) \
+         <(git diff --name-only d04c118c8 e0483122c | sort)
+# router/api-router.go  web/src/hooks/use-sidebar-data.ts  web/src/i18n/locales/{en,fr,ja,ru,vi,zh-TW,zh}.json
+```
+
+冲突为 0 的原因：上游对这 9 个文件的改动与我方改动落在**不同 hunk**，`ort` 三方合并自动拼接。
+
+- `router/api-router.go`：上游在 `selfRoute` 内改 access_token 路由 + 2 处 `handlePermissionRoute`（并置 import `net/http`）；
+  我方在文件末尾新增 `observabilityRoute` 块（`/observability` 4 条 GET）。实测合并后**两侧都在**（import 块同时含 `net/http` 与 `obscontroller`）。
+- `web/src/hooks/use-sidebar-data.ts`：上游给系统设置项加 `requiredRole: ROLE.SUPER_ADMIN`；我方抽出 `buildNavGroups` 并加 observability 分组。合并后**两侧都在**（`buildNavGroups` :59、observability 三入口 :122/127/132；ROLE 三处 :191/197/204）。
+
+### 7.2 是否触及 `model/`（DB 迁移预判）
+
+**触及，但本轮不动库。** 上游本轮改动 `model/` 下 11 个文件：
+`model/audit_log.go`、`auth_flow.go`、`main.go`、`model_pricing_config.go`、`option.go`、`user.go`、`user_access_token.go`（新增）+ 4 个测试文件。
+合并后 `model/` 已随上游前进，故**下一次打包/上线前必须按 AGENTS.md「Database compatibility」逐库（SQLite/MySQL/PG）验证
+`AutoMigrate` 与新增 `user_access_token` 表**；本轮仅预判与记录，未迁库、未起服务、未连数据库。
+
+### 7.3 门与全量验证（全绿）
+
+| 项 | 结果 | 备注 |
+|---|---|---|
+| `bash ~/.hermes/scripts/obs-gate.sh` | `GATE: ALL PASS`（G1–G8b） | G6 基线已自动前移至 `e0483122c`，报「既有文件 **12** 个被改，全在白名单内」 |
+| `cd web && bun run test` | `Test Files 185 passed` / `Tests 2256 passed` | 全量前端 |
+| `go build ./...` | exit 0，无输出 | 需 `GOPROXY=https://goproxy.cn,direct GOSUMDB=off`（见下） |
+| `go test ./service/observability/ ./controller/observability/ -count=1` | 两包均 `ok` | — |
+
+> **首次跑门时 G1/G2/G5 因依赖拉取而 FAIL（非产品缺陷，非判据错误，是环境门）**：`obs-gate.sh` 用裸 `go build`，
+> 默认 `GOPROXY=proxy.golang.org` 本机不可达；上游本轮升级 `moejs`、新增 `tokenkit`（依赖 `tiktoken-go/tokenizer`）等内容
+> 引入了本机缓存未命中的模块，故报 `dial tcp ... i/o timeout`。**预热**（命令级 `GOPROXY=https://goproxy.cn,direct GOSUMDB=off`
+> 跑一遍 `go build/vet/test`）后重跑门即全绿；`go.mod`/`go.sum` **未被改动**（未跑 `go mod tidy`）。门与脚本**未改**。
+
+### 7.4 diff 数字基线已前移到新 merge-base
+
+**diff 数字基线已随本轮合并由 `d04c118c8` 前移到 `e0483122c`。** 复算值：
+
+```bash
+BASE=$(git merge-base upstream/main HEAD)                      # = e0483122c
+git diff --shortstat "$BASE" -- . ':(exclude)observability'    # 59 files changed, 9639 insertions(+), 12 deletions(-)
+git diff --name-status "$BASE" -- . ':(exclude)observability' | awk '{print $1}' | sort | uniq -c   # 47 A / 12 M
+```
+
+**前移前后数字相同**（旧基线 `d04c118c8` 的复算值同为 `59 files changed, 9639 insertions(+), 12 deletions(-)`、`47 A / 12 M`）。
+原因：该口径只统计「我方独有改动」，而本轮我方未产生任何新改动（纯合并）；基线前移的差额恰为上游自身的 42 提交 / 303 文件，
+已由新基线（= 上游 `e0483122c`）抵消。核对：`git diff --name-only d04c118c8 caaafed1d | wc -l` 与
+`git diff --name-only e0483122c HEAD | wc -l` 均为 **71**，两侧口径一致。
+
+### 7.5 反向核对（分叉已变小）
+
+```bash
+git diff --name-only upstream/main..caaafed1d | wc -l   # 合并前：364（我方 71 + 上游新增而本 fork 尚未并入者）
+git diff --name-only upstream/main..HEAD      | wc -l   # 合并后：71
+```
+
+分解（`comm` 实测）：分叉 364 = 我方 71 ∪ 上游本轮新增 302，两侧交集 9（即 §7.1 那 9 个文件），
+即 `71 + 302 − 9 = 364`。故差额 `364 − 71 = 293 = 302 − 9`，恰为「上游新增且本 fork 此前缺失」的文件。
+（上游侧 303 个改动文件中，有 1 个不在合并前分叉集合内——为上游删除的文件，不产生分叉方向差分。）
+
+### 7.6 我方功能存活（逐条 grep，均为合并后实测）
+
+| 标记 | 命中 |
+|---|---|
+| `failureSourceNoteKey` | `web/src/features/observability/components/overview-page.tsx:95,145` |
+| `dimensionKeyAlias` | `service/observability/query.go:95,98`、`usage_service.go:172,261,296` |
+| `tokensJoin` | `service/observability/summary_service.go:174,177,194`、`usage_service.go:28` |
+| `w-full table-fixed` | `web/src/features/observability/components/usage-page.tsx:482` |
+| `Failures counted since error logs were enabled` | 7 个语言包各 **1** 次 |
+| `10-minute buckets · last 24 hours`（本轮新增文案抽样） | 7 个语言包各 **1** 次 |
+| `api-keys-table.tsx` 第 5 项排序改动 | `:322-324` 限制注释 + `:325 enableSorting` / `:326 withSortedRowModel` |
+
+> 7 个语言包相对 `upstream/main` 的 key 数：各语言 `now=6934 / upstream=6866`，即每语言新增 **68**、删除 **0**（与门 G8 差集一致）。
+
+### 7.7 附带说明与纪律
+
+- 上游本轮 `router/api-router.go` 新增 access_token 路由族与 `handlePermissionRoute`；`web/src/features/security/`
+  下的 access-token 组件整批重构（旧 `access-token-card.tsx` 删除，新增 `access-tokens-card.tsx` 等）——**均属上游既有目录，与本功能无交集**，未介入裁决。
+- 本轮**未** rebase、**未** force push、**未** `checkout --ours/--theirs`、**未**碰生产、**未**重建产物、**未**重启实例、
+  **未**修改上游既有文件逻辑（冲突数为 0，故无任何冲突解决改动）、**未**扩白名单、**未**动门与脚本。
