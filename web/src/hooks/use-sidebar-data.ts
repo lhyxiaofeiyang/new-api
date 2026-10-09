@@ -201,6 +201,7 @@ export function buildNavGroups(t: (key: string) => string): SidebarData {
             url: '/system-settings/site',
             activeUrls: ['/system-settings'],
             icon: Settings,
+            requiredRole: ROLE.SUPER_ADMIN,
           },
         ],
       },
