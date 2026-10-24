@@ -374,6 +374,25 @@ $ shasum -a 256 new-api-linux-amd64
 
 > 本轮为**文档回填**：只增补本节与 `deploy.md` §8，**上文（含 obs.1–obs.6 与 upgrade1）一字未改、未删**。
 
+### 上游合并（2026-10-24，upgrade3）
+
+- 合并 `upstream/main` = `33c61a242`（115 提交 / 699 文件，+35755 −8424）入 `feat/observability`，合并提交 `f6af8171f`，**冲突 0**；这是跨 rc.43→rc.46 三个上游版本的一次大合并，**触及 `model/` 大面积改动**（含两个 migration 文件），因此上线必然触发 AutoMigrate。
+- 门 `GATE: ALL PASS`（G1–G8b，主控独立复跑一次同样全 PASS）、前端 **2512 用例 / 210 文件**、`go build ./...` 与两个 observability 包全绿；diff 基线由 `e0483122c` 前移至 `33c61a242`（动态 `merge-base`，无需手工改）。明细见 `UPGRADE-MERGE.md` §8。
+- 我方标记存活：`failureSourceNoteKey` 2、`dimensionKeyAlias` 5、`tokensJoin` 4、`w-full table-fixed` 1、7 语言各 1 条新文案；抽查 5 个我方未碰过的上游文件与 `upstream/main` 逐位一致。
+- **工具链口径变更**：上游 `go.mod` 抬到 **go 1.26.10**，本机 1.26.5 会触发工具链下载，而 `GOSUMDB=off` 下下载校验被拒（门 G1/G2/G5 会 FAIL）。须先把 1.26.10 工具链放进 PATH 再跑门。
+
+### 生产上线（2026-10-24，obs.9）
+
+生产机 `xiaoqi-lighthouse` 于 **13:38–13:40（+08）** 将 `/opt/new-api/current/new-api` 由 `v1.0.0-rc.42-obs.8`（sha256 `898550df…`，135,119,010 字节）替换为 **`v1.0.0-rc.46-obs.9`**（sha256 `3c394a33…501a51`，136,769,698 字节，内嵌 bundle `index.dd95260920.js`）。
+
+- 四路由 `/api/observability/{summary,requests,requests/export,usage}` 免鉴权 **401**、`/nonexistent` **404**、`/api/status` 版本串 **`v1.0.0-rc.46-obs.9`**、外网 `/v1/models` **401**、带有效 token 的本机 `/v1/models` **200（19 个模型）**、日志无 panic/fatal、`NRestarts=0`。
+- **本轮有 schema 迁移（原地 ALTER，非重建库）**：`quota_data` 加 `cache_read_tokens` / `cache_creation_tokens` 两列、`tokens` 加 `allow_user_quota_query`、`audit_logs` 加索引 `idx_audit_time_event`；**无新增表**（39 → 39）。判据：DB inode 恒为 `1205304`、`logs` 66393 → 66406（只增）、`integrity_check=ok`、`.schema` 指纹 `1d2f39c7…414c76` **与上线前本地预演逐位相同**。
+- 上线前预演用生产只读快照在本地跑通（含二次启动幂等：两次 `.schema` 指纹一致、`logs` 66350 不变）。
+- **口径更正（重要）**：obs.7 曾把「重启日志 DDL 计数为 0」当成零迁移证据 —— 本轮实测该口径**不可用**（schema 实变 3 处，日志 DDL 仍为 0）。已就地更正 `deploy.md` §8.3 的判据表述。
+- 三个回滚点：DB 备份 `one-api.db.bak-obs9-20261024-133857`（91,217,920 字节，`integrity_check=ok`）、旧二进制 `new-api.obs8-20261024-133857`、unit `new-api.service.bak-20261024-133857`。完整记录见 `deploy.md` §9。
+
+> 本轮为**文档回填**：只增补本节与 `deploy.md` §9、`UPGRADE-MERGE.md` §8，并就地更正 `deploy.md` §8.3 的 DDL 判据表述；上文其余内容一字未改、未删。
+
 ### 挂账：审查未修项与未决口径（2026-09-24 关闭本轮开发会话时登记）
 
 > 完整审查报告（未入库，本地归档）：`.review/review-full-report-2026-09-23.md`（40,777 字节，gitignored）。

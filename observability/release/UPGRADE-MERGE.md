@@ -283,3 +283,81 @@ git diff --name-only upstream/main..HEAD      | wc -l   # 合并后：71
   下的 access-token 组件整批重构（旧 `access-token-card.tsx` 删除，新增 `access-tokens-card.tsx` 等）——**均属上游既有目录，与本功能无交集**，未介入裁决。
 - 本轮**未** rebase、**未** force push、**未** `checkout --ours/--theirs`、**未**碰生产、**未**重建产物、**未**重启实例、
   **未**修改上游既有文件逻辑（冲突数为 0，故无任何冲突解决改动）、**未**扩白名单、**未**动门与脚本。
+
+---
+
+## 8. 本轮合并记录（upgrade3，2026-10-24）
+
+从 `upstream/main@e0483122c`（rc.42 时期基线）合到 `33c61a242`（rc.46 之后），**跨 3 个上游 rc 版本**。宿主：本机 macOS，Go 工具链切到 **1.26.10**（上游把 `go.mod` 从 `1.26` 抬到 `1.26.10`，本机默认 1.26.5 会触发工具链下载）。
+
+### 8.1 合并参数（均为实跑输出）
+
+```
+$ git merge upstream/main --no-edit
+Auto-merging router/api-router.go
+Auto-merging web/src/i18n/locales/{en,fr,ja,ru,vi,zh-TW,zh}.json
+Merge made by the 'ort' strategy.
+$ git log --oneline -1
+f6af8171f Merge remote-tracking branch 'upstream/main' into feat/observability
+$ git log -1 --format=%P
+37660220d 33c61a242
+$ git diff --stat HEAD~1 HEAD | tail -1
+ 699 files changed, 35755 insertions(+), 8424 deletions(-)
+```
+
+- 领先提交：`git rev-list --count` 合并前 **115**；与 `v1.0.0-rc.46` tag（`7d8b91268`）差 **15** 提交（版本串仍按 rc 号规则取 `rc.46`）。
+- merge-base 由 `e0483122c` 前移到 `33c61a242`。
+- 冲突 **0**。试合并探测（`sync-upstream.sh`，不带 `--apply`）在正式合并前已报「OK 无冲突」，实跑一致。
+- Auto-merging 8 个文件 = `router/api-router.go` + 7 个语言包；`web/src/hooks/use-sidebar-data.ts` 上游本轮未改。
+
+### 8.2 是否触及 `model/`（DB 迁移预判）
+
+**触及，且面积很大**：`model/` 下 30+ 文件被改，含 `option_primary_key_migration.go`、`frontend_option_migration.go` 这类迁移相关文件 → 上线**必然**触发 AutoMigrate。实际结果：**无新增表**，只有 2 表加 3 列 + 1 个新索引（见 `deploy.md` §9.3）。预演用生产只读快照，`logs` 66350/66350 迁移前后不变，二次启动 schema 指纹不变。
+
+### 8.3 门与全量验证（全绿）
+
+门跑了 4 次，**全程未改代码/脚本**：
+
+| 次 | 结果 | 判定 |
+|---|---|---|
+| run 1 | G1/G2/G5 FAIL（工具链）、G7c FAIL（`markdown.test.tsx`） | 环境错（`GOSUMDB=off` 拒工具链下载）+ 陈旧依赖（跑门前未 `bun install`） |
+| run 2 | G1/G2/G5 FAIL | 同上，工具链仍未被 Go 接受 |
+| run 3 | G7c FAIL（`marketplace-install-dialog.test.tsx`） | 偶发：隔离连跑 3/3 通过、整门重跑通过、全量 `bun run test` 通过；**根因未查明** |
+| run 4 | **G1–G8b 全 PASS** | 主控随后独立复跑一次，同样全 PASS |
+
+```
+G1 go build PASS / G2 go vet PASS / G3 只读审计 PASS / G4 方言函数审计 PASS
+G5 go test 新包 PASS / G6 侵入点审计 PASS（基线 33c61a242；既有文件 12 个被改，全在白名单）
+G6b 未提交侵入点审计 PASS / G7a typecheck PASS / G7b lint PASS（observability 贡献 0；全库 155 条 pre-existing）
+G7c vitest PASS / G8 路由×3 PASS / G8 i18n key 差集 PASS / G8b i18n 卫生 PASS
+GATE: ALL PASS
+```
+
+- `go build ./...` exit 0；`go test ./service/observability/ ./controller/observability/ -count=1` 两包 ok。
+- 前端 **2512 用例 / 210 文件全过**（上一轮 2256 / 185，增加来自上游）。
+- **工具链坑（下轮必然复现）**：Go 1.26.5 + `go.mod 1.26.10` + `GOSUMDB=off` → `verifying module: checksum database disabled`，门会 G1/G2/G5 FAIL。解法：先用 `GOSUMDB=sum.golang.google.cn` 取到工具链，再把 `~/go/pkg/mod/golang.org/toolchain@v0.0.1-go1.26.10.darwin-arm64/bin` 前置到 PATH，之后照旧用 `GOSUMDB=off`。
+
+### 8.4 diff 数字基线已前移到新 merge-base
+
+新 merge-base = `33c61a242`。门 G6 的基线取 `git merge-base upstream/main HEAD`（**动态计算，不落盘**），因此合并后自动前移，无需手工改基线文件；`git status --porcelain` 合并后为空，说明门没留下未提交改动。
+
+### 8.5 我方功能存活（逐条 grep，均为合并后实测；主控复核过同一组数字）
+
+| 标记 | 命中 |
+|---|---|
+| `failureSourceNoteKey` | 2（`overview-page.tsx:95,145`） |
+| `dimensionKeyAlias` | 5（`query.go:95,98`、`usage_service.go:172,261,296`） |
+| `tokensJoin` | 4（`summary_service.go:174,177,194`、`usage_service.go:28`） |
+| `w-full table-fixed` | 1（`usage-page.tsx:482`） |
+| `Failures counted since error logs were enabled` | 7 个语言包各 1 |
+| `10-minute buckets · last 24 hours` | 7 个语言包各 1 |
+| 看板路由 | `router/api-router.go:362-368`，4 条 GET 挂 `AdminAuth` |
+
+> 7 个语言包相对 `upstream/main` 的 key 差集：每语言**新增 65、删除 0**（上轮记录是 68，差 3 未逐条核对原因，见 `.review/report-obs9-round1.md` 第 6 节第 7 条）。
+
+### 8.6 附带说明与纪律
+
+- 上游本轮改了 **`AGENTS.md`**：后端 i18n 语言定为 `en/zh-CN/zh-TW`、新增 `common.LogText` 等约定 —— 随合并带入，与本功能无关。
+- 抽查 5 个我方未碰过的上游文件（`.agents/rules/billing.md`、`controller/access_token.go`、`controller/plugin_protocol_test.go`、`controller/user_quota.go`、`middleware/task_plugin.go`），`git diff upstream/main -- <file>` 均为 **0 字节**。
+- 本轮**未** rebase、**未** force push、**未** push/tag、**未** `go mod tidy`，`go.mod`/`go.sum` 只来自上游。
+- 合并后未把产物立即上线；打包（obs.9）+ 生产部署另起一轮，纪律与开发轮相反（可构建、可动生产、禁 commit 产品逻辑）。

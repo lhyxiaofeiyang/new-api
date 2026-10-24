@@ -286,11 +286,13 @@ $SSH '
 | DB 文件 inode | 1205304 | 1205304 | 不变 |
 | `pragma integrity_check` | ok | ok | ok |
 | `.schema` sha256 | `b986ee6dca69d485a2142a2901576cda34b16bfeae7c06635f4a47c52f44e6b5` | 同左，逐位不变 | 不变 |
-| 重启日志内的 DDL | — | `ALTER TABLE` / `CREATE TABLE` / `DROP` 计数 **均为 0** | 零 DDL |
+| 重启日志内的 DDL | — | `ALTER TABLE` / `CREATE TABLE` / `DROP` 计数 **均为 0** | **不作判据，见下方口径更正** |
 
 **更强证据（直接对拍）**：把 **rc.39 时期写入的 raw 生产快照**（`obs-t6/one-api-prod-snap-20260923-224404.db`）与**当前生产库**的 schema 直接 `diff`，结果 **DIFF EMPTY / 207 行逐字节相同**，故「零迁移」成立。
 
 > ⚠️ **口径提醒（务必知悉）**：本节 schema 哈希记的是本机可复现的口径 **`.schema | shasum -a 256` = `b986ee6dca69d485…`**。早期工单曾引用过 `ed24e9e197d0389e…`，该值**在本机任何取法（`.schema` / `sql order by name` / `.dump` / `sqlite_master` 原文、sha256/md5/sha1）与任何库（生产库、raw 快照、verify 副本）上均不可复现**，其取法来源不明；判定「零迁移」请以**上表的对拍 diff 为空**为准，勿直接比对工单里那串值。
+
+> ⚠️ **口径更正（2026-10-24，obs.9 上线实测）**：**「重启日志里 DDL 计数为 0」不能当作零迁移证据。** GORM 的 SQL trace 不记录 AutoMigrate 生成的 `ALTER TABLE` / `CREATE INDEX` —— obs.9 上线时 schema 实际变了 3 处（`quota_data` 加 2 列、`tokens` 加 1 列、`audit_logs` 加 1 索引），启动日志里的 DDL 计数仍然是 **0**。判零迁移只能用：`.schema` 指纹逐位相同 + DB inode 不变 + 与旧快照对拍 diff 为空；判「有迁移且安全」则用：inode 不变（原地 ALTER，非重建库）+ 表数一致 + `logs` 行数与 `max(id)` 只增不减 + `integrity_check=ok` + `.schema` 指纹等于本地预演值。
 
 ### 8.4 验收清单（全部通过）
 
@@ -327,4 +329,80 @@ $SSH '
 
 - **`failure_source` 翻转未从免鉴权侧核实**：看板 `data_source.failure_source` 是否由 `perf_metrics` 翻为 `error_log`，需以**真实管理员凭证**登录查看（`/api/status` 不暴露该字段）。服务侧证据仅能证到「环境变量已生效」与「看板接口在服务器本机 200」。
 - **`logs.type=5` 初始仍为 0**：开日志只覆盖**开启之后**的失败；且 `type=5` 只记**渠道级**失败（已选中渠道、上游返回错误），**路由前**失败（如不存在的 model）不落 `type=5`。故需制造一次真实渠道级失败才能观察到增长。
+
+---
+
+## 9. 生产上线记录（obs.9，2026-10-24）
+
+生产机 `xiaoqi-lighthouse`；部署窗口 **13:38–13:40（+08）**；本轮由**上游同步**触发：合并 `upstream/main` 115 提交 / 699 文件（与 `v1.0.0-rc.46` tag 差 15 提交）。上一版为 `v1.0.0-rc.42-obs.8`（其上线记录未写入本文件，基线数据取自本轮预检）。
+
+### 9.1 替换前后二进制
+
+| 位置 | 二进制 sha256 | 字节 |
+|---|---|---|
+| 替换前（obs.8，回滚点保存） | `898550dff9a21404d41a672be6233ce97dc62b9eee81344ddd205d54527e380c` | 135,119,010 |
+| **替换后（obs.9）** | **`3c394a335e15f7f256d97b46961c9a02abdaece7e03202042862a17a2e501a51`** | 136,769,698 |
+
+上传 `scp → /tmp/new-api.obs9`，服务器端 sha256 与本地**逐位一致**后才 `install -m 0755 -o root -g root`；随后 `rm -f /tmp/new-api.obs9`。生产二进制实测 sha256 与本地产物一致。前端 bundle `index.496df962bf.js` → **`index.dd95260920.js`**。
+
+### 9.2 三个回滚点（`TS=20261024-133857`，全部在替换之前建好并校验）
+
+| # | 绝对路径 | sha256 | 字节 |
+|---|---|---|---|
+| 1 | `/opt/new-api/data/one-api.db.bak-obs9-20261024-133857` | `1aadd923696fe2cce6bd489710210ce24f00ae4544e407aaecef0ef9c5d07142` | 91,217,920 |
+| 2 | `/opt/new-api/data/new-api.obs8-20261024-133857` | `898550dff9a21404d41a672be6233ce97dc62b9eee81344ddd205d54527e380c` | 135,119,010 |
+| 3 | `/opt/new-api/data/new-api.service.bak-20261024-133857` | `c300440d18086ae729ab0c9f69e0ecdfb4c2a6f2035cead4344ce5c5b79ea439` | 351 |
+
+回滚点 1 以只读 `.backup` 生成，副本 `integrity_check=ok`、表数 39、`logs=66394/66394`。drop-in `error-log.conf` 部署前后未动（sha `dd26f83f…0d46`）。
+
+### 9.3 迁移（本轮**有** schema 变更，属原地 ALTER）
+
+上游本轮大面积改 `model/`，故上线前先用生产只读快照做了本地预演（含二次启动幂等验证），再上生产。变更共 3 处：
+
+| 变更 | 位置 |
+|---|---|
+| 加列 `cache_read_tokens` / `cache_creation_tokens` | `quota_data` |
+| 加列 `allow_user_quota_query` | `tokens` |
+| 加索引 `idx_audit_time_event` | `audit_logs(created_at, event_id)` |
+
+**无新增表**（39 → 39）。新增列对存量行取默认值（`quota_data` 两列 1599 行 sum=0；`tokens` 列 15 行全 NULL）。
+
+| 指标 | 预检（13:38） | 部署后（主控复验 13:5x） | 判据 |
+|---|---|---|---|
+| DB inode | `1205304` | `1205304` | 一致 → 原地 ALTER，非重建库 |
+| 表数 | 39 | 39 | 一致 |
+| `logs` 行数 / `max(id)` | 66393 / 66393 | 66406 / 66406 | 只增不减 |
+| `pragma integrity_check` | ok | ok | ok |
+| `.schema` sha256 | 预演期望 `1d2f39c77afdd45567d758d21350793b99a6cd8aab796edd9f655b61fc414c76` | 同值，**逐位相同** | 与本地预演一致 |
+
+**预演（上线前，本地）**：生产只读快照 39 表、`logs` 66350/66350；迁移后 39 表、`logs` 仍 66350/66350；两次启动（幂等）`.schema` 指纹相同。预演用的 darwin 产物 `83b2bc04b91841612c51b383ea0555d5f54712b18528df432d8f75df56a18480`。
+
+### 9.4 验收清单（全部通过）
+
+| 验收项 | 结果 |
+|---|---|
+| `systemctl is-active new-api` | `active`，`NRestarts=0` |
+| 生产二进制 sha256 | `3c394a33…501a51`（= 本地产物） |
+| `/api/status` 版本串 | `v1.0.0-rc.46-obs.9` |
+| 监听 | `LISTEN *:3000`，1 个 |
+| 首页 bundle | `index.dd95260920.js` |
+| 四条看板路由（免鉴权） | `401 / 401 / 401 / 401` |
+| `/api/observability/nonexistent` | `404` |
+| 公网 `/v1/models` | `401` |
+| 带有效 token 的 `/v1/models`（服务器本机） | **200，19 个模型**（转发链路可用） |
+| 应用日志 | 无 panic / fatal / ERR / migration error |
+| 真实转发 | 一次 `POST /v1/chat/completions`（`claude-sonnet-5-5-high`，流式）200，计费日志正常写入 |
+| DB 不变量 | 见 9.3 表 |
+
+### 9.5 与 obs.7 记录的判据差异（重要）
+
+obs.7 那次用「重启日志 DDL 计数为 0」作为零迁移证据 —— **obs.9 实测证明该口径不可用**：schema 实变 3 处，日志 DDL 仍为 0。判据见 §8.3 下方「口径更正」。本轮用的是 schema 指纹 + inode + 预演对拍三重判据。
+
+### 9.6 上线后待确认项（主控与执行 agent 共同列出）
+
+- **obs.8 回退路径未实测**：schema 是加列/加索引、理论上向后兼容，但没有真用 obs.8 二进制去读新库。
+- **已登录态看板未验**：管理员登录后的 summary / requests / usage 真实返回、`data_source.failure_source` 是否已翻为 `error_log`，仍是盲区（自 obs.7 起未变）。
+- **新列是否被写入未验**：三处新列只验存在，未验值。
+- **停机窗口未测**：重启瞬间在途请求是否被中断无证据。
+- **`logs.type=5` 未制造真实渠道级失败**（同 §8.6）。
 
