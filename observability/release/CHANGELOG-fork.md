@@ -390,6 +390,7 @@ $ shasum -a 256 new-api-linux-amd64
 - 上线前预演用生产只读快照在本地跑通（含二次启动幂等：两次 `.schema` 指纹一致、`logs` 66350 不变）。
 - **口径更正（重要）**：obs.7 曾把「重启日志 DDL 计数为 0」当成零迁移证据 —— 本轮实测该口径**不可用**（schema 实变 3 处，日志 DDL 仍为 0）。已就地更正 `deploy.md` §8.3 的判据表述。
 - 三个回滚点：DB 备份 `one-api.db.bak-obs9-20261024-133857`（91,217,920 字节，`integrity_check=ok`）、旧二进制 `new-api.obs8-20261024-133857`、unit `new-api.service.bak-20261024-133857`。完整记录见 `deploy.md` §9。
+- **管理员登录态验收当日补齐**（自 obs.7 起挂账的盲区）：`failure_source` 实测已翻为 **`error_log`**（`summary` 返回 `data_source.error_log_enabled=true, log_rows=834`）；三页看板渲染真实数据、i18n 中英切换正常、`/keys` 页六个表头排序控件都在；新列 `quota_data.cache_read_tokens` 全库 `sum=10,291,112`（**真正在写入**，不是空列）。明细见 `deploy.md` §9.6。
 
 > 本轮为**文档回填**：只增补本节与 `deploy.md` §9、`UPGRADE-MERGE.md` §8，并就地更正 `deploy.md` §8.3 的 DDL 判据表述；上文其余内容一字未改、未删。
 

@@ -398,11 +398,28 @@ $SSH '
 
 obs.7 那次用「重启日志 DDL 计数为 0」作为零迁移证据 —— **obs.9 实测证明该口径不可用**：schema 实变 3 处，日志 DDL 仍为 0。判据见 §8.3 下方「口径更正」。本轮用的是 schema 指纹 + inode + 预演对拍三重判据。
 
-### 9.6 上线后待确认项（主控与执行 agent 共同列出）
+### 9.6 管理员登录态验收（2026-10-24 补做，当日完成）
+
+先前自 obs.7 起一直挂账的「未登录侧看不到」的那批，这次用真实管理员会话补齐（ego 浏览器 + SSH 隧道到 `127.0.0.1:3000`，凭据由本人在浏览器内输入，AI 不接触密码）。
+
+| 验收项 | 实测证据 |
+|---|---|
+| `/api/observability/summary?range=24h` | **200**，返回 `data_source = {"error_log_enabled":true,"failure_source":"error_log","log_rows":834}` |
+| `failure_source` 是否翻为 `error_log` | **已翻**（`error_log`，不再是 `perf_metrics`）；页面同步显示「失败统计自开启错误日志起」 |
+| `/api/observability/usage?range=7d&dimension=token&...` | **200**，返回真实行（`key/label/calls/success_calls/failure_calls/prompt_tokens/...`） |
+| 仪表盘渲染（同一次页面快照，数字随后随流量增长） | 834 调用、7413.4 万 Token、$5,560.25、平均延迟 10.85s、成功率 95.32%（795/834）、流式 633、活跃 API Key 6、Top 模型与渠道齐备 |
+| 请求监控渲染 | 表格 834 条，列含时间/用户/API Key/渠道/模型/Token/耗时/首字节/流式/重试链路/状态；筛选器与导出按钮在 |
+| 用量分析渲染 | 7 天口径：8312 调用、6.2 亿 Token、$62,018.6；API 密钥维度表含调用/成功/失败/Token/费用/平均延迟/占比，可下钻 |
+| 侧边栏我方入口 | 「TOKEN 监控」分组下「数据看板 / 请求监控 / 用量分析」三项齐全，版本串显示 `v1.0.0-rc.46-obs.9` |
+| i18n 切换 | 切 `en` 后整站英文（`Dashboard / Request Monitoring / Usage Analytics / TOKEN MONITORING`），切回 `zhCN` 正常 |
+| API 密钥页排序（第 5 项侵入点） | `/keys` 页 13 行；名称/状态/额度/分组/时间/过期六个表头均带排序 button |
+| rc.46 新功能可见 | 仪表盘出现「缓存 Tokens 6778.4 万 / 命中上游提示缓存的部分」——即上游 #7773 的缓存用量显示在生产生效 |
+| 新列是否真被写入 | **有值**：`quota_data.cache_read_tokens` 全库 `sum = 10,291,112`；`cache_creation_tokens` `sum = 0`（该口径下尚无 Claude cache 写入）；`tokens.allow_user_quota_query` 15/15 为 NULL（未配置即 NULL，符合设计） |
+
+### 9.7 仍未验证 / 未解决
 
 - **obs.8 回退路径未实测**：schema 是加列/加索引、理论上向后兼容，但没有真用 obs.8 二进制去读新库。
-- **已登录态看板未验**：管理员登录后的 summary / requests / usage 真实返回、`data_source.failure_source` 是否已翻为 `error_log`，仍是盲区（自 obs.7 起未变）。
-- **新列是否被写入未验**：三处新列只验存在，未验值。
 - **停机窗口未测**：重启瞬间在途请求是否被中断无证据。
-- **`logs.type=5` 未制造真实渠道级失败**（同 §8.6）。
+- **`logs.type=5` 只观察到真实失败、未做受控制造**：库里现 1858 条渠道级失败行，且 obs.9 重启后（13:42:47）有新增，故「写入链路通」已证；但没有按 §8.6 那样主动制造一次失败来观察增量。
+- **`marketplace-install-dialog.test.tsx` 并发偶发失败根因未查明**（第 1 轮门 run3，隔离与整门重跑均通过）。
 
